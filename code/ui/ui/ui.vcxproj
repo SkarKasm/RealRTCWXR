@@ -210,6 +210,8 @@
   <ItemGroup>
     <ClCompile Include="..\..\game\bg_lib.c" />
     <ClCompile Include="..\..\game\bg_misc.c" />
+    <ClCompile Include="..\..\steam\steam.c" />
+    <ClCompile Include="..\..\steamshim\steamshim_child.c" />
     <ClCompile Include="..\..\qcommon\q_math.c" />
     <ClCompile Include="..\..\qcommon\q_shared.c" />
     <ClCompile Include="..\ui_atoms.c" />

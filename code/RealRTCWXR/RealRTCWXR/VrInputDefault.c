@@ -305,7 +305,6 @@ void HandleInput_Default( ovrInputStateTrackedRemote *pDominantTrackedRemoteNew,
                 !vr.misc_camera && !vr.cgzoommode && !vr.cin_camera)
             {
                 if (cl.snap.ps.weapon == WP_KNIFE ||
-                    cl.snap.ps.weapon == WP_DAGGER ||
                     cl.snap.ps.weapon == WP_LUGER ||
                     cl.snap.ps.weapon == WP_SILENCER ||
                     cl.snap.ps.weapon == WP_COLT ||
@@ -538,7 +537,7 @@ void HandleInput_Default( ovrInputStateTrackedRemote *pDominantTrackedRemoteNew,
             vr.secondaryswingvelocity = VectorLength(velocity);
 
 
-            const qboolean holdingKnife = cl.snap.ps.weapon == WP_KNIFE || cl.snap.ps.weapon == WP_DAGGER;
+            const qboolean holdingKnife = cl.snap.ps.weapon == WP_KNIFE;
             // The selector is browsed with a hand held low, and a cutscene owns the controls
             const qboolean meleeAllowed = !vr.item_selector && !vr.cin_camera;
 
@@ -707,7 +706,7 @@ void HandleInput_Default( ovrInputStateTrackedRemote *pDominantTrackedRemoteNew,
             }
 
             if (primaryButton2New != primaryButton2Old) {
-                if (cl.snap.ps.weapon == WP_KNIFE || cl.snap.ps.weapon == WP_DAGGER)
+                if (cl.snap.ps.weapon == WP_KNIFE)
                 {
                     //B Button - Throws the knife
                     sendButtonAction("+attack2", primaryButton2New);
@@ -724,7 +723,7 @@ void HandleInput_Default( ovrInputStateTrackedRemote *pDominantTrackedRemoteNew,
             int thirdPerson = Cvar_VariableIntegerValue("cg_thirdPerson");
 
             // Don't fire velocity triggered weapons
-            if (cl.snap.ps.weapon != WP_KNIFE && cl.snap.ps.weapon != WP_DAGGER && !vr.item_selector)
+            if (cl.snap.ps.weapon != WP_KNIFE && !vr.item_selector)
             {
                 if (cl.snap.ps.weapon == WP_AKIMBO ||
                     cl.snap.ps.weapon == WP_DUAL_TT33) {
