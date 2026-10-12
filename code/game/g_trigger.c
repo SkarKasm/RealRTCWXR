@@ -27,6 +27,7 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 #include "g_local.h"
+#include "g_survival.h"
 
 
 void InitTrigger( gentity_t *self ) {
@@ -819,6 +820,7 @@ void ammo_touch( gentity_t *self, gentity_t *other, trace_t *trace ) {
 		if ( ammoAdded ) {
 			// add the cell event (to get sound, etc.)
 			G_AddPredictableEvent( touchClients[i], EV_ITEM_PICKUP, BG_FindItem( "Ammo Pack" ) - bg_itemlist );
+
 			if ( self->health != -9999 ) {
 				// reduce the ammount of available ammo by the added clip number
 				self->health -= self->damage;
@@ -1250,36 +1252,6 @@ You specify which objective it is with a number in "count"
   "count"		The objective number
   "track"		If this is specified, it will override the default message
 */
-#define AXIS_OBJECTIVE      1
-#define ALLIED_OBJECTIVE    2
-
-void Touch_objective_info( gentity_t *ent, gentity_t *other, trace_t *trace ) {
-
-	if ( other->timestamp > level.time ) {
-		return;
-	}
-
-	other->timestamp = level.time + 4500;
-
-	if ( ent->track ) {
-		if ( ent->spawnflags & AXIS_OBJECTIVE ) {
-			trap_SendServerCommand( other - g_entities, va( "oid 0 \"" S_COLOR_RED "You are near %s\n\"", ent->track ) );
-		} else if ( ent->spawnflags & ALLIED_OBJECTIVE ) {
-			trap_SendServerCommand( other - g_entities, va( "oid 1 \"" S_COLOR_BLUE "You are near %s\n\"", ent->track ) );
-		} else {
-			trap_SendServerCommand( other - g_entities, va( "oid -1 \"You are near %s\n\"", ent->track ) );
-		}
-	} else {
-		if ( ent->spawnflags & AXIS_OBJECTIVE ) {
-			trap_SendServerCommand( other - g_entities, va( "oid 0 \"" S_COLOR_RED "You are near objective #%i\n\"", ent->count ) );
-		} else if ( ent->spawnflags & ALLIED_OBJECTIVE ) {
-			trap_SendServerCommand( other - g_entities, va( "oid 1 \"" S_COLOR_BLUE "You are near objective #%i\n\"", ent->count ) );
-		} else {
-			trap_SendServerCommand( other - g_entities, va( "oid -1 \"You are near objective #%i\n\"", ent->count ) );
-		}
-	}
-
-}
 
 void SP_trigger_objective_info( gentity_t *ent ) {
 	ent->touch  = Touch_objective_info;

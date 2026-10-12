@@ -459,10 +459,13 @@ void RE_BeginFrame( stereoFrame_t stereoFrame ) {
 #endif
 
 	//
-	// gamma stuff
+	// gamma / intensity stuff
 	//
-	if ( r_gamma->modified ) {
+	if (r_gamma->modified || r_intensity->modified || r_overBrightBits->modified)
+	{
 		r_gamma->modified = qfalse;
+		r_intensity->modified = qfalse;
+		r_overBrightBits->modified = qfalse;
 
 		R_IssuePendingRenderCommands();
 		R_SetColorMappings();
@@ -484,19 +487,19 @@ void RE_BeginFrame( stereoFrame_t stereoFrame ) {
 	//
 	cmd = (drawBufferCommand_t*)R_GetCommandBuffer(sizeof(*cmd));
 	if (!cmd) {
-		return;
+			return;
 	}
-	cmd->commandId = RC_DRAW_BUFFER;
+		cmd->commandId = RC_DRAW_BUFFER;
 
 	{
-		if (stereoFrame == STEREO_LEFT) {
+		if ( stereoFrame == STEREO_LEFT ) {
 			cmd->buffer = (int)0;
 		}
 		else if (stereoFrame == STEREO_RIGHT) {
 			cmd->buffer = (int)1;
 		}
 		else {
-			ri.Error(ERR_FATAL, "RE_BeginFrame: Stereo is enabled, but stereoFrame was %i", stereoFrame);
+			ri.Error( ERR_FATAL, "RE_BeginFrame: Stereo is enabled, but stereoFrame was %i", stereoFrame );
 		}
 	}
 #endif
@@ -512,7 +515,7 @@ RE_EndFrame
 Returns the number of msec spent in the back end
 =============
 */
-void RE_EndFrame(int *frontEndMsec, int *backEndMsec ) {
+void RE_EndFrame( int *frontEndMsec, int *backEndMsec ) {
 	endFrameCommand_t *cmd;
 
 	if ( !tr.registered ) {

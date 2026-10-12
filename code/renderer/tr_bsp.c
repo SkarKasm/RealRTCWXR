@@ -30,6 +30,9 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "tr_local.h"
 
+// Fix for potential lightgrid mismatches while building with MSYS2
+#pragma GCC optimize ("no-fast-math")
+
 /*
 
 Loads and prepares a map file for scene rendering.
@@ -125,9 +128,10 @@ static void R_ColorShiftLightingBytes( byte in[4], byte out[4] ) {
 		b = b * 255 / max;
 	}
 
-	out[0] = r;
-	out[1] = g;
-	out[2] = b;
+	out[0] = R_GammaByte(r);
+	out[1] = R_GammaByte(g);
+	out[2] = R_GammaByte(b);
+
 	out[3] = in[3];
 }
 
@@ -1600,8 +1604,8 @@ static void R_SetParent( mnode_t *node, mnode_t *parent ) {
 	if ( node->contents != -1 ) {
 		return;
 	}
-	R_SetParent( node->children[0], node );
-	R_SetParent( node->children[1], node );
+	R_SetParent( node->children[ 0 ], node );
+	R_SetParent( node->children[ 1 ], node );
 }
 
 /*

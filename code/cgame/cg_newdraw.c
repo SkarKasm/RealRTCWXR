@@ -148,10 +148,6 @@ weapIconDrawSize
 */
 static int weapIconDrawSize( int weap ) {
 	switch ( weap ) {
-
-	// weapons to not draw
-	case WP_DAGGER:
-	    return 0;
 	// weapons with 'wide' icons
 	case WP_THOMPSON:
 	case WP_MP40:
@@ -176,14 +172,15 @@ static int weapIconDrawSize( int weap ) {
 	case WP_G43:
 	case WP_M1GARAND:
 	case WP_BAR:
+	case WP_M30:
     case WP_MP44:
 	case WP_MG42M:
 	case WP_M97:
 	case WP_AUTO5:
 	case WP_BROWNING:
 	case WP_M7:
-	case WP_M30:
 	case WP_M1941:
+	case WP_HDM:
 		return 2;
 	case WP_KNIFE:
 	     return 1;
@@ -236,7 +233,7 @@ static void CG_DrawPlayerWeaponIcon( rectDef_t *rect, qboolean drawHighlighted, 
 			scale = (float)(cg.predictedPlayerState.grenadeTimeLeft/(KNIFECHARGETIME/7.f));
 			halfScale = scale * 0.5f;
 		}
-		else if ( realweap == WP_DYNAMITE ) {
+		else if ( realweap == WP_DYNAMITE || realweap == WP_DYNAMITE_ENG ) {
 			if ( ( ( cg.grenLastTime ) % 1000 ) > ( ( cg.predictedPlayerState.grenadeTimeLeft ) % 1000 ) ) {
 				trap_S_StartLocalSound( cgs.media.grenadePulseSound4, CHAN_LOCAL_SOUND );
 			}
@@ -260,8 +257,8 @@ static void CG_DrawPlayerWeaponIcon( rectDef_t *rect, qboolean drawHighlighted, 
 		}
 
 		if ( realweap != WP_KNIFE ) {
-		scale = (float)( ( cg.predictedPlayerState.grenadeTimeLeft ) % 1000 ) / 100.0f;
-		halfScale = scale * 0.5f;
+			scale = (float)((cg.predictedPlayerState.grenadeTimeLeft)%1000) / 100.0f;
+			halfScale = scale * 0.5f;
 		}
 
 
@@ -510,6 +507,7 @@ static void CG_DrawPlayerAmmoValue( rectDef_t *rect, int font, float scale, vec4
 	playerState_t   *ps;
 	int weap;
 	qboolean special = qfalse;
+	weapon_t specialWeap = WP_NONE;
 
 	cent = &cg_entities[cg.snap->ps.clientNum];
 	ps = &cg.snap->ps;
@@ -531,13 +529,10 @@ static void CG_DrawPlayerAmmoValue( rectDef_t *rect, int font, float scale, vec4
 
 	switch ( weap ) {      // some weapons don't draw ammo count text
 	case WP_AIRSTRIKE:
-	case WP_DAGGER:
+	case WP_POISONGAS:
+	case WP_DYNAMITE_ENG:
+	case WP_SMOKE_BOMB:
 		return;
-
-	case WP_AKIMBO:
-	case WP_DUAL_TT33:
-		special = qtrue;
-		break;
 
 	case WP_GRENADE_LAUNCHER:
 	case WP_KNIFE:
@@ -545,7 +540,6 @@ static void CG_DrawPlayerAmmoValue( rectDef_t *rect, int font, float scale, vec4
 	case WP_DYNAMITE:
 	case WP_TESLA:
 	case WP_FLAMETHROWER:
-	case WP_POISONGAS:
 	case WP_HOLYCROSS:
 		if ( type == 0 ) {  // don't draw reserve value, just clip (since these weapons have all their ammo in the clip)
 			return;
@@ -556,17 +550,19 @@ static void CG_DrawPlayerAmmoValue( rectDef_t *rect, int font, float scale, vec4
 		break;
 	}
 
+	if ( specialWeap > WP_NONE && specialWeap < WP_NUM_WEAPONS ) {	// or < WP_DUMMY_MG42 ?
+		special = qtrue;
+	}
 
 	if ( type == 0 ) { // ammo
 		value = cg.snap->ps.ammo[BG_FindAmmoForWeapon( weap )];
 	} else {        // clip
 		value = ps->ammoclip[BG_FindClipForWeapon( weap )];
 		if ( special ) {
-			value2 = value;
+			value2 = ps->ammoclip[BG_FindClipForWeapon(specialWeap)];
 			if ( ammoTable[weap].weapAlts ) {
 				value = ps->ammoclip[ammoTable[weap].weapAlts];
 			}
-//				value2 = ps->ammoclip[weapAlts[weap]];
 		}
 	}
 
@@ -822,6 +818,38 @@ static void CG_DrawPlayerScore( rectDef_t *rect, int font, float scale, vec4_t c
 }
 
 
+
+static void CG_DrawPlayerKills( rectDef_t *rect, int font, float scale, vec4_t color, qhandle_t shader, int textStyle ) {
+	char num[16];
+	int value = cg.snap->ps.persistant[PERS_KILLS];
+
+	if ( shader ) {
+		trap_R_SetColor( color );
+		CG_DrawPic( rect->x, rect->y, rect->w, rect->h, shader );
+		trap_R_SetColor( NULL );
+	} else {
+		Com_sprintf( num, sizeof( num ), "%i", value );
+		value = CG_Text_Width( num, font, scale, 0 );
+		CG_Text_Paint( rect->x + ( rect->w - value ) / 2, rect->y + rect->h, font, scale, color, num, 0, 0, textStyle );
+	}
+}
+
+
+static void CG_DrawPlayerWaves( rectDef_t *rect, int font, float scale, vec4_t color, qhandle_t shader, int textStyle ) {
+	char num[16];
+	int value = cg.snap->ps.persistant[PERS_WAVES];
+
+	if ( shader ) {
+		trap_R_SetColor( color );
+		CG_DrawPic( rect->x, rect->y, rect->w, rect->h, shader );
+		trap_R_SetColor( NULL );
+	} else {
+		Com_sprintf( num, sizeof( num ), "%i", value );
+		value = CG_Text_Width( num, font, scale, 0 );
+		CG_Text_Paint( rect->x + ( rect->w - value ) / 2, rect->y + rect->h, font, scale, color, num, 0, 0, textStyle );
+	}
+}
+
 static void CG_DrawHoldableItem( rectDef_t *rect, int font, float scale, qboolean draw2D ) {
 	int	value;
 	gitem_t	*item;
@@ -850,6 +878,53 @@ static void CG_DrawHoldableItem( rectDef_t *rect, int font, float scale, qboolea
 			CG_DrawPic( rect->x, rect->y, rect->w, rect->h, cg_items[item - bg_itemlist].icons[0] );
 		}
 	}
+}
+
+static void CG_DrawPerks( rectDef_t *rect, int font, float scale, qboolean draw2D ) {
+    int i, numPerks = 0;
+    gitem_t *item;
+    float x, y = 20; // Top part of the screen
+    qhandle_t icon;
+
+	if (cg_gameType.integer != GT_SURVIVAL)
+	{
+		return;
+	}
+
+	// Count the number of active perks
+    for ( i = 0; i < MAX_PERKS; i++ ) {
+        if ( cg.snap->ps.perks[i] > 0 || (cg.snap->ps.stats[STAT_PERK] & (1 << i)) ) {
+            numPerks++;
+        }
+    }
+
+    // Calculate the starting x position to center the perks
+    x = 220 - (numPerks * (rect->w + 5) - 5) / 2;
+
+    if ( cg_fixedAspect.integer == 2 ) {
+        CG_SetScreenPlacement(PLACE_RIGHT, PLACE_CENTER);
+    }
+
+    for ( i = 0; i < MAX_PERKS; i++ ) {
+        if ( cg.snap->ps.perks[i] > 0 || (cg.snap->ps.stats[STAT_PERK] & (1 << i)) ) {
+            item = BG_FindItemForPerk( i );
+
+            if ( item ) {
+                CG_RegisterItemVisuals( item - bg_itemlist );
+
+                icon = cg_items[item - bg_itemlist].icons[0];
+
+				// PRO icon replacement
+				if ( cg.snap->ps.perks[i] >= 2 && cgs.media.perkProIcons[i] ) {
+					icon = cgs.media.perkProIcons[i];
+				}
+
+                CG_DrawPic( x, y, rect->w, rect->h, icon );
+
+				x += rect->w + 5; // 5 is the space between icons
+            }
+        }
+    }
 }
 
 void flubfoo( void ) {
@@ -1348,34 +1423,50 @@ float CG_GetValue( int ownerDraw, int type ) {
 		return ps->stats[STAT_ARMOR];
 		break;
 	case CG_PLAYER_AMMO_VALUE:
-		if ( cent->currentState.weapon ) {
-			if ( type == RANGETYPE_RELATIVE ) {
-				int weap = BG_FindAmmoForWeapon( cent->currentState.weapon );
-				return (float)ps->ammo[weap] / (float)ammoTable[weap].maxammo;
-			} else {
-				return ps->ammo[BG_FindAmmoForWeapon( cent->currentState.weapon )];
+		if (cent->currentState.weapon)
+		{
+			const playerState_t *ps = &cg.snap->ps;
+			int weap = BG_FindAmmoForWeapon(cent->currentState.weapon);
+
+			if (type == RANGETYPE_RELATIVE)
+			{
+				int maxAmmo = BG_GetMaxAmmo(ps, weap, 1.5f);
+				return (float)ps->ammo[weap] / (float)maxAmmo;
+			}
+			else
+			{
+				return ps->ammo[weap];
 			}
 		}
 		break;
 	case CG_PLAYER_AMMOCLIP_VALUE:
-		if ( cent->currentState.weapon ) {
-			if ( type == RANGETYPE_RELATIVE ) {
-				if (cent->currentState.weapon == WP_AKIMBO) {
-					return (float)(ps->ammoclip[WP_AKIMBO] + ps->ammoclip[WP_COLT]) / (float)(ammoTable[WP_AKIMBO].maxclip * 4);
-				}
-				else if (cent->currentState.weapon == WP_DUAL_TT33) {
-					return (float)(ps->ammoclip[WP_DUAL_TT33] + ps->ammoclip[WP_TT33]) / (float)(ammoTable[WP_DUAL_TT33].maxclip * 4);
-				}
-				else {
-					return (float)ps->ammoclip[BG_FindClipForWeapon(cent->currentState.weapon)] / (float)ammoTable[cent->currentState.weapon].maxclip;
-				}
-			} else {
-				return ps->ammoclip[BG_FindClipForWeapon( cent->currentState.weapon )];
+		if (cent->currentState.weapon)
+		{
+			const playerState_t *ps = &cg.snap->ps;
+			int weapon = cent->currentState.weapon;
+
+			int clipIndex = BG_FindClipForWeapon(weapon);
+			int clipAmmo = ps->ammoclip[clipIndex];
+			int maxClip = BG_GetMaxClip(ps, weapon);
+
+			if (type == RANGETYPE_RELATIVE)
+			{
+				return (float)clipAmmo / (float)maxClip;
+			}
+			else
+			{
+				return clipAmmo;
 			}
 		}
 		break;
 	case CG_PLAYER_SCORE:
 		return cg.snap->ps.persistant[PERS_SCORE];
+		break;
+	case CG_PLAYER_KILLS:
+		return cg.snap->ps.persistant[PERS_KILLS];
+		break;
+	case CG_PLAYER_WAVES:
+		return cg.snap->ps.persistant[PERS_WAVES];
 		break;
 	case CG_PLAYER_HEALTH:
 		return ps->stats[STAT_HEALTH];
@@ -1996,10 +2087,37 @@ static void CG_DrawFatigue( rectDef_t *rect, vec4_t color, int align ) {
 static void CG_DrawWeapRecharge( rectDef_t *rect, vec4_t color, int align ) {
 	float barFrac;
 	float chargeTime;
-	int weap = 0;
 	int flags = 0;
 	//qboolean fade = qfalse;
 	vec4_t bgcolor = {1.0f, 1.0f, 1.0f, 0.25f};
+
+	switch ( cg.snap->ps.weapon ) {
+	case WP_AIRSTRIKE:
+		chargeTime = cg_LTChargeTime.value;
+		break;
+	case WP_POISONGAS:
+		chargeTime = cg_medicChargeTime.value;
+		break;
+	case WP_DYNAMITE_ENG:
+		chargeTime = cg_engineerChargeTime.value;
+		break;
+	case WP_SMOKE_BOMB:
+		chargeTime = cg_cvopsChargeTime.value;
+		break;
+	default:
+		if ( COM_BitCheck( cg.snap->ps.weapons, WP_AIRSTRIKE ) ) {
+			chargeTime = cg_LTChargeTime.value;
+		} else if ( COM_BitCheck( cg.snap->ps.weapons, WP_POISONGAS ) ) {
+			chargeTime = cg_medicChargeTime.value;
+		} else if ( COM_BitCheck( cg.snap->ps.weapons, WP_DYNAMITE_ENG ) ) {
+			chargeTime = cg_engineerChargeTime.value;
+		} else if ( COM_BitCheck( cg.snap->ps.weapons, WP_SMOKE_BOMB ) ) {
+			chargeTime = cg_cvopsChargeTime.value;
+		} else {
+			return;
+		}
+		break;
+	}
 
 	if ( align != HUD_HORIZONTAL) {
 		flags |= 4;   // BAR_VERT
@@ -2007,40 +2125,26 @@ static void CG_DrawWeapRecharge( rectDef_t *rect, vec4_t color, int align ) {
 	}
 	flags |= 16;
 
-// JPW NERVE -- added drawWeaponPercent in multiplayer
+	barFrac = (float)( cg.time - cg.snap->ps.classWeaponTime ) / chargeTime;
 
-		weap = cg.snap->ps.weapon;
+	if ( barFrac > 1.0 ) {
+		barFrac = 1.0;
+	}
 
-		if ( !( cg.snap->ps.eFlags & EF_ZOOMING ) ) {
-			if ( weap != WP_AIRSTRIKE ) {
-				//fade = qtrue;
-				return;
-			}
-		}
+	color[0] = 1.0f;
+	color[1] = color[2] = barFrac;
+	color[3] = 0.25 + barFrac * 0.5;
 
-		chargeTime = cg_LTChargeTime.value;
+	/*if ( fade ) {
+		bgcolor[3] *= 0.4f;
+		color[3] *= 0.4;
+	}*/
 
-		barFrac = (float)( cg.time - cg.snap->ps.classWeaponTime ) / chargeTime;
+	CG_FilledBar( rect->x, rect->y + 6, rect->w, rect->h * 0.84f, color, NULL, bgcolor, barFrac, flags );
 
-		if ( barFrac > 1.0 ) {
-			barFrac = 1.0;
-		}
-
-		color[0] = 1.0f;
-		color[1] = color[2] = barFrac;
-		color[3] = 0.25 + barFrac * 0.5;
-
-		/*if ( fade ) {
-			bgcolor[3] *= 0.4f;
-			color[3] *= 0.4;
-		}*/
-
-		CG_FilledBar( rect->x, rect->y + 6, rect->w, rect->h * 0.84f, color, NULL, bgcolor, barFrac, flags );
-
-		color[1] = color[2] = 1.0f;
-		color[3] = cg_hudAlpha.value;
-		trap_R_SetColor( color );
-
+	color[1] = color[2] = 1.0f;
+	color[3] = cg_hudAlpha.value;
+	trap_R_SetColor( color );
 }
 /*
 ==============
@@ -2147,11 +2251,20 @@ void CG_OwnerDraw( float x, float y, float w, float h, float text_x, float text_
 	case CG_PLAYER_HOLDABLE:
 		CG_DrawHoldableItem( &rect, font, scale, ownerDrawFlags & CG_SHOW_2DONLY );
 		break;
+	case CG_PLAYER_PERKS:
+		CG_DrawPerks( &rect, font, scale, ownerDrawFlags & CG_SHOW_2DONLY );
+		break;
 	case CG_PLAYER_ITEM:
 		CG_DrawPlayerItem( &rect, font, scale, ownerDrawFlags & CG_SHOW_2DONLY );
 		break;
 	case CG_PLAYER_SCORE:
 		CG_DrawPlayerScore( &rect, font, scale, color, shader, textStyle );
+		break;
+	case CG_PLAYER_KILLS:
+		CG_DrawPlayerKills( &rect, font, scale, color, shader, textStyle );
+		break;
+	case CG_PLAYER_WAVES:
+		CG_DrawPlayerWaves( &rect, font, scale, color, shader, textStyle );
 		break;
 	case CG_PLAYER_HEALTH:
 		CG_DrawPlayerHealth( &rect, font, scale, color, shader, textStyle );
@@ -2275,6 +2388,38 @@ void CG_OwnerDraw( float x, float y, float w, float h, float text_x, float text_
 void CG_MouseEvent( int x, int y ) {
 	int n;
 
+	if ( cg.weaponWheel.active ) {
+
+		// 1. Apply mouse movement
+		cgs.cursorX += x;
+		cgs.cursorY += y;
+
+		// 2. Clamp to screen (virtual 640x480 space)
+		if ( cgs.cursorX < 0 ) cgs.cursorX = 0;
+		if ( cgs.cursorX > 640 ) cgs.cursorX = 640;
+
+		if ( cgs.cursorY < 0 ) cgs.cursorY = 0;
+		if ( cgs.cursorY > 480 ) cgs.cursorY = 480;
+
+		// 3. Clamp to wheel radius (THIS is the important part)
+		float cx = SCREEN_WIDTH * 0.35f;
+		float cy = SCREEN_HEIGHT * 0.5f;
+
+		float dx = cgs.cursorX - cx;
+		float dy = cgs.cursorY - cy;
+
+		float len = sqrtf( dx * dx + dy * dy );
+		float maxRadius = 120.0f;
+
+		if ( len > maxRadius ) {
+			float scale = maxRadius / len;
+			cgs.cursorX = cx + dx * scale;
+			cgs.cursorY = cy + dy * scale;
+		}
+
+		return;
+	}
+
 	if ( ( cg.predictedPlayerState.pm_type == PM_NORMAL || cg.predictedPlayerState.pm_type == PM_SPECTATOR ) && cg.showScores == qfalse ) {
 		trap_Key_SetCatcher( 0 );
 		return;
@@ -2308,6 +2453,28 @@ void CG_MouseEvent( int x, int y ) {
 		Display_MouseMove( NULL, cgs.cursorX, cgs.cursorY );
 	}
 
+}
+
+#define JOY_AXIS_LOOK_X 2
+#define JOY_AXIS_LOOK_Y 3
+
+void CG_JoystickEvent( int axis, int value ) {
+
+    if ( !cg.weaponWheel.active ) {
+        return;
+    }
+
+    float norm = value / 32767.0f;
+
+    // right stick assumed
+	if (axis == JOY_AXIS_LOOK_X)
+	{
+		cg.weaponWheel.stickX = norm;
+	}
+	else if (axis == JOY_AXIS_LOOK_Y)
+	{
+		cg.weaponWheel.stickY = norm;
+	}
 }
 
 /*

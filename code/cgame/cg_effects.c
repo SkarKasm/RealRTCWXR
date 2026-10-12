@@ -338,7 +338,8 @@ void CG_Bleed( vec3_t origin, int entityNum ) {
 
 	cent = &cg_entities[entityNum];
 
-	if ( cent->currentState.aiChar == AICHAR_ZOMBIE ) {
+	if ( cent->currentState.aiChar == AICHAR_ZOMBIE || cent->currentState.aiChar == AICHAR_ZOMBIE_SURV 
+		|| cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME  || cent->currentState.aiChar == AICHAR_ZOMBIE_GHOST ) {
 		CG_ParticleBloodCloudZombie( cent, origin, vec3_origin );
 		return;
 	}
@@ -432,6 +433,9 @@ void CG_LaunchGib( centity_t *cent, vec3_t origin, vec3_t angles, vec3_t velocit
 
 	switch ( cent->currentState.aiChar ) {
 	case AICHAR_ZOMBIE:
+	case AICHAR_ZOMBIE_SURV:
+	case AICHAR_ZOMBIE_FLAME:
+	case AICHAR_ZOMBIE_GHOST:
 		le->pos.trType = TR_GRAVITY_LOW;
 		le->angles.trDelta[0] = 400 * crandom();
 		le->angles.trDelta[1] = 400 * crandom();
@@ -443,7 +447,10 @@ void CG_LaunchGib( centity_t *cent, vec3_t origin, vec3_t angles, vec3_t velocit
 		break;
 	case AICHAR_HEINRICH:
 	case AICHAR_HELGA:
-		le->endTime = le->startTime + 999000;   // stay around for long enough to see the player off
+		if (cg_gameType.integer != GT_SURVIVAL)
+		{
+			le->endTime = le->startTime + 999000; // stay around for long enough to see the player off
+		}
 	default:
 		le->leBounceSoundType = LEBS_BLOOD;
 		le->leMarkType = LEMT_BLOOD;
@@ -485,7 +492,8 @@ void CG_LaunchGib( centity_t *cent, vec3_t origin, vec3_t angles, vec3_t velocit
 	if ( cent && CG_EntOnFire( cent ) ) {
 		le->onFireStart = cent->currentState.onFireStart;
 		le->onFireEnd = re->fadeEndTime + 1000;
-	} else if ( ( cent->currentState.aiChar == AICHAR_ZOMBIE ) && IS_FLAMING_ZOMBIE( cent->currentState ) ) {
+	} else if ( ( cent->currentState.aiChar == AICHAR_ZOMBIE || cent->currentState.aiChar == AICHAR_ZOMBIE_SURV  || cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME
+		|| cent->currentState.aiChar == AICHAR_ZOMBIE_GHOST ) && IS_FLAMING_ZOMBIE( cent->currentState ) ) {
 		le->onFireStart = cg.time - 1000;
 		le->onFireEnd = re->fadeEndTime + 1000;
 	}
@@ -747,6 +755,9 @@ void CG_GibPlayer( centity_t *cent, vec3_t playerOrigin, vec3_t gdir ) {
 
 			// RF, Zombies dying by particle effect dont spawn gibs
 			if ( ( cent->currentState.aiChar == AICHAR_ZOMBIE ) ||
+			     ( cent->currentState.aiChar == AICHAR_ZOMBIE_SURV ) ||
+				 ( cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME ) ||
+			     ( cent->currentState.aiChar == AICHAR_ZOMBIE_GHOST ) ||
 				 ( cent->currentState.aiChar == AICHAR_HELGA ) ||
 				 ( cent->currentState.aiChar == AICHAR_HEINRICH ) ) {
 				//VectorScale( velocity, 4, velocity );
@@ -788,7 +799,7 @@ void CG_GibPlayer( centity_t *cent, vec3_t playerOrigin, vec3_t gdir ) {
 						VectorSubtract( junctionOrigin[i], junctionOrigin[j], dir );
 
 						// ok now lets spawn a little blood
-						if ( cent->currentState.aiChar == AICHAR_ZOMBIE ) {
+						if ( cent->currentState.aiChar == AICHAR_ZOMBIE || cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME || cent->currentState.aiChar == AICHAR_ZOMBIE_SURV  || cent->currentState.aiChar == AICHAR_ZOMBIE_GHOST ) {
 							CG_ParticleBloodCloudZombie( cent, junctionOrigin[i], dir );
 						} else {
 							CG_ParticleBloodCloud( cent, junctionOrigin[i], dir );
@@ -796,7 +807,7 @@ void CG_GibPlayer( centity_t *cent, vec3_t playerOrigin, vec3_t gdir ) {
 
 						// RF, also spawn some blood in this direction
 						VectorMA( junctionOrigin[i], 2.0, dir, origin );
-						if ( cent->currentState.aiChar == AICHAR_ZOMBIE ) {
+						if ( cent->currentState.aiChar == AICHAR_ZOMBIE || cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME || cent->currentState.aiChar == AICHAR_ZOMBIE_SURV || cent->currentState.aiChar == AICHAR_ZOMBIE_GHOST ) {
 							CG_ParticleBloodCloudZombie( cent, origin, dir );
 						} else {
 							CG_ParticleBloodCloud( cent, origin, dir );
@@ -804,6 +815,9 @@ void CG_GibPlayer( centity_t *cent, vec3_t playerOrigin, vec3_t gdir ) {
 
 						// Zombies spawn more bones
 						if ( ( cent->currentState.aiChar == AICHAR_ZOMBIE ) ||
+						     ( cent->currentState.aiChar == AICHAR_ZOMBIE_SURV ) ||
+							( cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME ) ||
+						     ( cent->currentState.aiChar == AICHAR_ZOMBIE_GHOST ) ||
 							 ( cent->currentState.aiChar == AICHAR_HEINRICH ) ||
 							 ( cent->currentState.aiChar == AICHAR_HELGA ) ) {
 							// spawn a gib
@@ -1058,6 +1072,9 @@ void CG_GibVampirism( centity_t *cent, vec3_t playerOrigin, vec3_t gdir ) {
 
 			// RF, Zombies dying by particle effect dont spawn gibs
 			if ( ( cent->currentState.aiChar == AICHAR_ZOMBIE ) ||
+			     ( cent->currentState.aiChar == AICHAR_ZOMBIE_SURV ) ||
+				  ( cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME ) ||
+                 ( cent->currentState.aiChar == AICHAR_ZOMBIE_GHOST ) ||
 				 ( cent->currentState.aiChar == AICHAR_HELGA ) ||
 				 ( cent->currentState.aiChar == AICHAR_HEINRICH )
 				) {
@@ -1100,7 +1117,7 @@ void CG_GibVampirism( centity_t *cent, vec3_t playerOrigin, vec3_t gdir ) {
 						VectorSubtract( junctionOrigin[i], junctionOrigin[j], dir );
 
 						// ok now lets spawn a little blood
-						if (( cent->currentState.aiChar == AICHAR_ZOMBIE) ) {
+						if (( cent->currentState.aiChar == AICHAR_ZOMBIE || cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME || cent->currentState.aiChar == AICHAR_ZOMBIE_SURV || cent->currentState.aiChar == AICHAR_ZOMBIE_GHOST) ) {
 							CG_ParticleBloodCloudZombie( cent, junctionOrigin[i], dir );
 						} else {
 							CG_ParticleBloodCloud( cent, junctionOrigin[i], dir );
@@ -1108,7 +1125,7 @@ void CG_GibVampirism( centity_t *cent, vec3_t playerOrigin, vec3_t gdir ) {
 
 						// RF, also spawn some blood in this direction
 						VectorMA( junctionOrigin[i], 2.0, dir, origin );
-						if (( cent->currentState.aiChar == AICHAR_ZOMBIE) ) {
+						if (( cent->currentState.aiChar == AICHAR_ZOMBIE || cent->currentState.aiChar == AICHAR_ZOMBIE_SURV || cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME || cent->currentState.aiChar == AICHAR_ZOMBIE_GHOST ) ) {
 							CG_ParticleBloodCloudZombie( cent, origin, dir );
 						} else {
 							CG_ParticleBloodCloud( cent, origin, dir );
@@ -1116,6 +1133,9 @@ void CG_GibVampirism( centity_t *cent, vec3_t playerOrigin, vec3_t gdir ) {
 
 						// Zombies spawn more bones
 						if ( ( cent->currentState.aiChar == AICHAR_ZOMBIE ) ||
+						     ( cent->currentState.aiChar == AICHAR_ZOMBIE_SURV ) ||
+							 ( cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME ) ||
+							 ( cent->currentState.aiChar == AICHAR_ZOMBIE_GHOST ) ||
 							 ( cent->currentState.aiChar == AICHAR_HEINRICH ) ||
 							 ( cent->currentState.aiChar == AICHAR_HELGA ) 
 							) {
@@ -1964,7 +1984,11 @@ void CG_RumbleEfx( float pitch, float yaw ) {
 #define MAX_SMOKESPRITES 512
 #define SMOKEBOMB_DISTANCEBETWEENSPRITES 16.f
 #define SMOKEBOMB_SPAWNRATE 10
-#define SMOKEBOMB_SMOKEVELOCITY ((640.f - 16.f)/8)/1000.f	// units per msec
+#define SMOKEBOMB_MINRADIUS   16.f
+#define SMOKEBOMB_MAXRADIUS   1024.f
+
+// velocity so the smoke reaches max radius in ~8 seconds (same behavior as before)
+#define SMOKEBOMB_SMOKEVELOCITY (((SMOKEBOMB_MAXRADIUS - SMOKEBOMB_MINRADIUS) / 8.f) / 1000.f)
 
 typedef struct smokesprite_s {
 	struct smokesprite_s *next;
@@ -2127,7 +2151,7 @@ void CG_RenderSmokeGrenadeSmoke( centity_t *cent, const weaponInfo_t *weapon, we
 	}
 
 	if( cent->currentState.effect1Time > 16 ) {
-		int volume = 16 + (cent->currentState.effect1Time/640.f)*(100-16);
+		int volume = 16 + (cent->currentState.effect1Time / SMOKEBOMB_MAXRADIUS) * (100 - 16);
 
 		if( !cent->dl_atten ||
 			cent->currentState.pos.trType != TR_STATIONARY ||
@@ -2176,23 +2200,24 @@ CG_S_AddLoopingSound(cent->currentState.number, cent->lerpOrigin, vec3_origin, w
 		if( !spritesNeeded )
 			return;
 
+		// Set smoke color according to weapon type.
+		switch (wtype)
+		{
+		case WP_POISONGAS:
+			// use a slightly less bright green for poison gas medic
+			smokeColor[0] = 0.0f;
+			smokeColor[1] = 0.5f;
+			smokeColor[2] = 0.0f;
+			smokeColor[3] = 0.40f;
+			break;
 
-        // Set smoke color according to weapon type.
-        switch (wtype) {
-            case WP_POISONGAS:
-                smokeColor[0] = 0.20f;
-                smokeColor[1] = 0.15f;
-                smokeColor[2] = 0.05f;
-                smokeColor[3] = 0.40f;
-                break;
-
-            default:
-                smokeColor[0] = 0.35f;
-                smokeColor[1] = 0.35f;
-                smokeColor[2] = 0.35f;
-                smokeColor[3] = 0.80f;
-                break;
-        }
+		default:
+			smokeColor[0] = 0.35f;
+			smokeColor[1] = 0.35f;
+			smokeColor[2] = 0.35f;
+			smokeColor[3] = 0.80f;
+			break;
+		}
 
 		if( spritesNeeded == 1 ) {
 			// this is theoretically fine, till the smokegrenade ends up in a solid
@@ -2264,8 +2289,8 @@ void CG_AddSmokeSprites( void ) {
 		else
 			radius = -1.f;
 
-		if( radius < 0 )
-			radius = 640.f;	// max radius
+		if (radius < 0)
+			radius = SMOKEBOMB_MAXRADIUS; // was 640.f
 
 		// Expire sprites
 		if( smokesprite->dist > radius * .5f ) {

@@ -262,7 +262,7 @@ static int R_DlightSurface( msurface_t *surf, int dlightBits ) {
 		dlightBits = R_DlightGrid( (srfGridMesh_t *)surf->data, dlightBits );
 	} else if ( *surf->data == SF_TRIANGLES ) {
 		dlightBits = R_DlightTrisurf( (srfTriangles_t *)surf->data, dlightBits );
-	} else {
+	}else {
 		dlightBits = 0;
 	}
 
@@ -694,7 +694,8 @@ void R_AddWorldSurfaces( void ) {
 	}
 
 	tr.currentEntityNum = REFENTITYNUM_WORLD;
-	tr.shiftedEntityNum = tr.currentEntityNum << QSORT_REFENTITYNUM_SHIFT;
+	tr.shiftedEntityNum =
+		((uint64_t)tr.currentEntityNum & REFENTITYNUM_MASK) << QSORT_REFENTITYNUM_SHIFT;
 
 	// determine which leaves are in the PVS / areamask
 	R_MarkLeaves();

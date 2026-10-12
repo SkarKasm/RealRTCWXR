@@ -36,7 +36,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include <VrClientInfo.h>
 
-vr_client_info_t* vr;
+extern vr_client_info_t* vr;
 
 extern int hWeaponSnd;
 extern int hWeaponEchoSnd; 
@@ -133,6 +133,7 @@ static void CG_UseItem( centity_t *cent ) {
 				case HI_BOOK1:
 				case HI_BOOK2:
 				case HI_BOOK3:
+				case HI_BOOK4:
 					break;
 				case HI_ADRENALINE:
 					CG_CenterPrint( "usedadrenaline", SCREEN_HEIGHT - ( SCREEN_HEIGHT * 0.25 ), SMALLCHAR_WIDTH );
@@ -148,6 +149,15 @@ static void CG_UseItem( centity_t *cent ) {
 					break;
 				case HI_BANDAGES:
 					CG_CenterPrint( "usedbandages", SCREEN_HEIGHT - ( SCREEN_HEIGHT * 0.25 ), SMALLCHAR_WIDTH );
+					break;
+				case HI_CROSS:
+					CG_CenterPrint( "usedcross", SCREEN_HEIGHT - ( SCREEN_HEIGHT * 0.25 ), SMALLCHAR_WIDTH );
+					break;
+				case HI_EMP:
+					CG_CenterPrint( "usedemp", SCREEN_HEIGHT - ( SCREEN_HEIGHT * 0.25 ), SMALLCHAR_WIDTH );
+					break;
+				case HI_XSHIELD:
+					CG_CenterPrint( "usedshield", SCREEN_HEIGHT - ( SCREEN_HEIGHT * 0.25 ), SMALLCHAR_WIDTH );
 					break;
 				case HI_WINE:
 					CG_CenterPrint( "drankwine", SCREEN_HEIGHT - ( SCREEN_HEIGHT * 0.25 ), SMALLCHAR_WIDTH );
@@ -169,6 +179,7 @@ static void CG_UseItem( centity_t *cent ) {
 	case HI_BOOK1:
 	case HI_BOOK2:
 	case HI_BOOK3:
+	case HI_BOOK4:
 		trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.bookSound );
 		break;
 
@@ -185,12 +196,68 @@ static void CG_UseItem( centity_t *cent ) {
 	case HI_BANDAGES:
 		trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.bandagesSound );
 		break;
+	case HI_CROSS:
+		trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.crossSound );
+		break;
+	case HI_EMP:
+		trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.empSound );
+		break;
+	case HI_XSHIELD:
+		trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.shieldSound );
+		break;
 	}
 }
 
 // from cg_weapons.c
 extern int CG_WeaponIndex( int weapnum, int *bank, int *cycle );
 
+
+static void CG_PlayHitSound( const int clientNum, const int hitSound )
+{
+	if ( hitSound == HIT_NONE ) {
+		return;
+	}
+
+	// Do we have hitsounds even enabled
+	if ( !( cg_hitSounds.integer & HITSOUNDS_ON )) {
+		return;
+	}
+
+	// Are we spectating someone?
+	if ( cg.snap->ps.clientNum != cg.clientNum && cgs.clientinfo[cg.clientNum].team != TEAM_SPECTATOR && !( cg.snap->ps.pm_flags & PMF_LIMBO ) ) {
+		return;
+	}
+
+	// Is the event for the current client (might be the player or a player being spectated)
+	if ( clientNum != cg.snap->ps.clientNum ) {
+		return;
+	}
+
+	switch ( hitSound ) {
+	case HIT_TEAMSHOT:
+		if ( !( cg_hitSounds.integer & HITSOUNDS_NOTEAMSHOT ) ) {
+			trap_S_StartLocalSound( cgs.media.teamShot, CHAN_LOCAL_SOUND );
+		}
+		break;
+	case HIT_HEADSHOT:
+	case HIT_DEATHSHOT:
+		if ( !( cg_hitSounds.integer & HITSOUNDS_NOHEADSHOT ) ) {
+			trap_S_StartLocalSound( cgs.media.headShot, CHAN_LOCAL_SOUND );
+		}
+		else if ( !( cg_hitSounds.integer & HITSOUNDS_NOBODYSHOT ) ) {
+			trap_S_StartLocalSound( cgs.media.bodyShot, CHAN_LOCAL_SOUND );
+		}
+		break;
+	case HIT_BODYSHOT:
+		if ( !( cg_hitSounds.integer & HITSOUNDS_NOBODYSHOT ) ) {
+			trap_S_StartLocalSound( cgs.media.bodyShot, CHAN_LOCAL_SOUND );
+		}
+		break;
+	default:
+		CG_Printf( "Unknown hitsound: %i\n", hitSound );
+		break;
+	}
+}
 
 /*
 ================
@@ -238,6 +305,10 @@ static void CG_ItemPickup( int itemNum ) {
 			//	3 - "If Better"
 			//	4 - "New or Better"
 			//	5 - "New and Better"
+
+			if ( weapon == WP_SNIPERRIFLE || weapon == WP_SNOOPERSCOPE || weapon == WP_FG42SCOPE || weapon == WP_DELISLESCOPE || weapon == WP_M1941SCOPE ) {
+				weapon = GetWeaponTableData( weapon )->weapAlts;
+			}
 
 			// don't ever autoswitch to secondary fire weapons
 			if ( weapon != WP_SNIPERRIFLE && weapon != WP_SNOOPERSCOPE && weapon != WP_FG42SCOPE && weapon != WP_DELISLESCOPE && weapon != WP_M1941SCOPE ) {  //----(SA)	modified
@@ -1325,7 +1396,11 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_ELITE_STEP ][footstepcnt] );
 			} else if ( cent->currentState.aiChar == AICHAR_ZOMBIE ) {
 				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_ZOMBIE_STEP ][footstepcnt] );
-			} else if ( cent->currentState.aiChar == AICHAR_LOPER ) {
+			} else if ( cent->currentState.aiChar == AICHAR_ZOMBIE_SURV ) {
+				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_ZOMBIE_STEP ][footstepcnt] );
+			} else if ( cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME ) {
+				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_ZOMBIE_STEP ][footstepcnt] );
+			} else if ( cent->currentState.aiChar == AICHAR_LOPER || cent->currentState.aiChar == AICHAR_LOPER_SPECIAL ) {
 				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_LOPER_STEP ][footstepcnt] );
 			} else if ( cent->currentState.aiChar == AICHAR_PROTOSOLDIER ) {
 				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_PROTOSOLDIER_STEP ][footstepcnt] );
@@ -1350,7 +1425,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		if ( cg_footsteps.integer ) {
 			if ( cent->currentState.aiChar == AICHAR_ELITEGUARD ) {
 				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_ELITE_METAL ][footstepcnt] );
-			} else if ( cent->currentState.aiChar == AICHAR_LOPER ) {
+			} else if ( cent->currentState.aiChar == AICHAR_LOPER || cent->currentState.aiChar == AICHAR_LOPER_SPECIAL) {
 				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_LOPER_METAL ][footstepcnt] );
 			} else if ( cent->currentState.aiChar == AICHAR_PROTOSOLDIER ) {
 				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_PROTOSOLDIER_METAL ][footstepcnt] );
@@ -1374,7 +1449,11 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_ELITE_WOOD ][footstepcnt] );
 			} else if ( cent->currentState.aiChar == AICHAR_ZOMBIE ) {
 				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_ZOMBIE_WOOD ][footstepcnt] );
-			} else if ( cent->currentState.aiChar == AICHAR_LOPER ) {
+			} else if ( cent->currentState.aiChar == AICHAR_ZOMBIE_SURV ) {
+				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_ZOMBIE_WOOD ][footstepcnt] );
+			} else if ( cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME ) {
+				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_ZOMBIE_WOOD ][footstepcnt] );
+			} else if ( cent->currentState.aiChar == AICHAR_LOPER || cent->currentState.aiChar == AICHAR_LOPER_SPECIAL) {
 				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_LOPER_WOOD ][footstepcnt] );
 			} else if ( cent->currentState.aiChar == AICHAR_PROTOSOLDIER ) {
 				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_PROTOSOLDIER_WOOD ][footstepcnt] );
@@ -1418,6 +1497,10 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 			if ( cent->currentState.aiChar == AICHAR_ELITEGUARD ) {
 				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_ELITE_GRAVEL ][footstepcnt] );
 			} else if ( cent->currentState.aiChar == AICHAR_ZOMBIE ) {
+				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_ZOMBIE_GRAVEL ][footstepcnt] );
+			} else if ( cent->currentState.aiChar == AICHAR_ZOMBIE_SURV ) {
+				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_ZOMBIE_GRAVEL ][footstepcnt] );
+			} else if ( cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME ) {
 				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_ZOMBIE_GRAVEL ][footstepcnt] );
 			} else if ( cent->currentState.aiChar == AICHAR_PROTOSOLDIER ) {
 				trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.footsteps[ FOOTSTEP_PROTOSOLDIER_GRAVEL][footstepcnt] );
@@ -1752,26 +1835,44 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		}
 		break;
 
-	case EV_FILL_CLIP:
-		DEBUGNAME( "EV_FILL_CLIP" );
-		if ( cg_weapons[es->weapon].reloadSound ) {
-			trap_S_StartSound( NULL, es->number, CHAN_WEAPON, cg_weapons[es->weapon].reloadSound ); // JPW NERVE following sherman's SP fix, should allow killing reload sound when player dies
-		}
-		break;
-
-	case EV_FILL_CLIP_FULL:
-		DEBUGNAME( "EV_FILL_CLIP_FULL" );
-		if ( cg_weapons[es->weapon].reloadFullSound ) {
-			trap_S_StartSound( NULL, es->number, CHAN_WEAPON, cg_weapons[es->weapon].reloadFullSound ); // JPW NERVE following sherman's SP fix, should allow killing reload sound when player dies
-		}
-		break;
+case EV_FILL_CLIP:
+    DEBUGNAME( "EV_FILL_CLIP" );
+	if ( es->number == cg.snap->ps.clientNum ) {
+		CG_ResetSimpleZoom();
+	}
+    if ( cg_weapons[es->weapon].reloadSound ) {
+        if ( cg.predictedPlayerState.perks[PERK_WEAPONHANDLING] ) {
+            trap_S_StartSoundEx( NULL, es->number, CHAN_WEAPON, cg_weapons[es->weapon].reloadSoundFast, SND_REQUESTCUT );
+        } else {
+            trap_S_StartSoundEx( NULL, es->number, CHAN_WEAPON, cg_weapons[es->weapon].reloadSound, SND_REQUESTCUT );
+        }
+    }
+    break;
+case EV_FILL_CLIP_FULL:
+    DEBUGNAME( "EV_FILL_CLIP_FULL" );
+	if ( es->number == cg.snap->ps.clientNum ) {
+		CG_ResetSimpleZoom();
+	}
+    if ( cg_weapons[es->weapon].reloadFullSound ) {
+        if (cg.predictedPlayerState.perks[PERK_WEAPONHANDLING] ) {
+            trap_S_StartSoundEx( NULL, es->number, CHAN_WEAPON, cg_weapons[es->weapon].reloadFullSoundFast, SND_REQUESTCUT );
+        } else {
+            trap_S_StartSoundEx( NULL, es->number, CHAN_WEAPON, cg_weapons[es->weapon].reloadFullSound, SND_REQUESTCUT );
+        }
+    }
+    break;
 	case EV_FILL_CLIP_AI:
 		DEBUGNAME( "EV_FILL_CLIP_AI" );
 		if ( cg_weapons[es->weapon].reloadSound ) {
-			trap_S_StartSound( NULL, es->number, CHAN_WEAPON, cg_weapons[es->weapon].reloadSoundAi );
+			trap_S_StartSoundEx( NULL, es->number, CHAN_WEAPON, cg_weapons[es->weapon].reloadSoundAi, SND_REQUESTCUT );
 		}
 		break;
-
+	case EV_RESET_ZOOM:
+	    DEBUGNAME( "EV_RESET_ZOOM" );
+		if ( es->number == cg.snap->ps.clientNum ) {
+			CG_ResetSimpleZoom();
+		}
+		break;
 	case EV_M97_PUMP:
 		DEBUGNAME("EV_M97_PUMP");
 		// Jaymod
@@ -1787,11 +1888,16 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 
 	case EV_NOAMMO:
 		DEBUGNAME( "EV_NOAMMO" );
-		if ( ( es->weapon != WP_GRENADE_LAUNCHER ) && ( es->weapon != WP_GRENADE_PINEAPPLE ) && ( es->weapon != WP_DYNAMITE ) && ( es->weapon != WP_AIRSTRIKE ) && ( es->weapon != WP_POISONGAS )  ) {
+		if ( es->number == cg.snap->ps.clientNum ) {
+			CG_ResetSimpleZoom();
+		}
+		if ( ( es->weapon != WP_GRENADE_LAUNCHER ) && ( es->weapon != WP_GRENADE_PINEAPPLE ) && ( es->weapon != WP_SMOKE_BOMB ) && ( es->weapon != WP_DYNAMITE )  && ( es->weapon != WP_DYNAMITE_ENG ) && ( es->weapon != WP_AIRSTRIKE ) && ( es->weapon != WP_POISONGAS )  ) {
 			trap_S_StartSound( NULL, es->number, CHAN_AUTO, cgs.media.noAmmoSound );
 		}
 		if ( es->number == cg.snap->ps.clientNum && cg_autoReload.integer == 1 ) {
-			CG_OutOfAmmoChange();
+            if (cg_newinventory.integer <= 0 && cg_gameType.integer != GT_SURVIVAL) {
+				CG_OutOfAmmoChange();
+			}
 		}
 		break;
 	case EV_NOQUICKGRENAMMO:
@@ -1803,6 +1909,10 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		int newweap = 0;
 
 		DEBUGNAME( "EV_CHANGE_WEAPON" );
+
+		if ( es->number == cg.snap->ps.clientNum ) {
+			CG_ResetSimpleZoom();
+		}
 
 		// client will get this message if reloading while using an alternate weapon
 		// client should voluntarily switch back to primary at that point
@@ -1852,16 +1962,20 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		break;
 	case EV_FIRE_WEAPON:
 	case EV_FIRE_WEAPONB:
-		DEBUGNAME( "EV_FIRE_WEAPON" );
+		DEBUGNAME("EV_FIRE_WEAPON");
 
-		CG_FireWeapon( cent, event );
-		if ( event == EV_FIRE_WEAPONB ) {  // akimbo firing colt
-			cent->akimboFire = qtrue;
-			vr->akimboFire = qtrue;
-		} else {
-			cent->akimboFire = qfalse;
-			vr->akimboFire = qfalse;
+		// Only suppress weapon-fire events for the local player while zooming
+		if (cent->currentState.number == cg.snap->ps.clientNum)
+		{
+			if (cg.snap->ps.eFlags & EF_ZOOMING)
+			{
+				break;
+			}
 		}
+
+		CG_FireWeapon(cent, event);
+		cent->akimboFire = (event == EV_FIRE_WEAPONB);
+		vr->akimboFire = cent->akimboFire;
 		break;
 	case EV_FIRE_WEAPON_LASTSHOT:
 		DEBUGNAME( "EV_FIRE_WEAPON_LASTSHOT" );
@@ -1940,6 +2054,18 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		DEBUGNAME( "EV_USE_ITEM14" );
 		CG_UseItem( cent );
 		break;
+	case EV_USE_ITEM15:
+		DEBUGNAME( "EV_USE_ITEM15" );
+		CG_UseItem( cent );
+		break;
+	case EV_USE_ITEM16:
+		DEBUGNAME( "EV_USE_ITEM16" );
+		CG_UseItem( cent );
+		break;
+	case EV_USE_ITEM17:
+		DEBUGNAME( "EV_USE_ITEM17" );
+		CG_UseItem( cent );
+		break;
 
 		//=================================================================
 
@@ -1972,7 +2098,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		DEBUGNAME( "EV_GRENADE_BOUNCE" );
 
 		// DYNAMITE
-		if ( es->weapon == WP_DYNAMITE ) {
+		if ( es->weapon == WP_DYNAMITE || es->weapon == WP_DYNAMITE_ENG ) {
 			trap_S_StartSound( NULL, es->number, CHAN_AUTO, cgs.media.dynamitebounce1 );
 		} else {
 			int flags;
@@ -2054,7 +2180,16 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 
 	case EV_BULLET_HIT_FLESH:
 		DEBUGNAME( "EV_BULLET_HIT_FLESH" );
+		//CG_PlayHitSound( es->otherEntityNum, es->modelindex );
 		CG_Bullet( es->pos.trBase, es->otherEntityNum, dir, qtrue, es->eventParm, qfalse, es->otherEntityNum2 );
+		break;
+
+	case EV_HITSOUNDS:
+		CG_PlayHitSound( es->otherEntityNum, es->modelindex );
+		break;
+
+	case EV_PLAYER_HIT:
+		CG_PlayHitSound( es->clientNum, es->eventParm );
 		break;
 
 	case EV_WOLFKICK_HIT_WALL:
@@ -2268,6 +2403,21 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		}
 		//trap_S_StartSound( NULL, es->number, CHAN_ITEM, trap_S_RegisterSound( "sound/items/protect3.wav" ) );
 		break;
+	case EV_POWERUP_BATTLESUIT_SURV:
+		DEBUGNAME( "EV_POWERUP_BATTLESUIT_SURV" );
+		if ( es->number == cg.snap->ps.clientNum ) {
+			cg.powerupActive = PW_BATTLESUIT_SURV;
+			cg.powerupTime = cg.time;
+		}
+		trap_S_StartSound( NULL, es->number, CHAN_ITEM, trap_S_RegisterSound( "sound/items/protect3.wav" ) );
+		break;
+	case EV_POWERUP_XSHIELD:
+		DEBUGNAME( "EV_POWERUP_XSHIELD" );
+		if ( es->number == cg.snap->ps.clientNum ) {
+			cg.powerupActive = PW_XSHIELD;
+			cg.powerupTime = cg.time;
+		}
+		break;
 	case EV_POWERUP_REGEN:
 		DEBUGNAME( "EV_POWERUP_REGEN" );
 		if ( es->number == cg.snap->ps.clientNum ) {
@@ -2285,6 +2435,12 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		CG_LoseHat( cent, dir );
 		break;
 
+	case EV_REATTACH_HAT:
+		DEBUGNAME( "EV_REATTACH_HAT" );
+		ByteToDir( es->eventParm, dir );
+		CG_Player( cent );
+		break;
+
 	case EV_GIB_HEAD:
 		DEBUGNAME( "EV_GIB_HEAD" );
 		trap_S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.gibSound );
@@ -2297,7 +2453,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 
 	case EV_GIB_PLAYER:
 		DEBUGNAME( "EV_GIB_PLAYER" );
-		if ( es->aiChar == AICHAR_ZOMBIE ) {
+		if ( es->aiChar == AICHAR_ZOMBIE || es->aiChar == AICHAR_ZOMBIE_SURV || es->aiChar == AICHAR_ZOMBIE_FLAME || es->aiChar == AICHAR_ZOMBIE_GHOST ) {
 			trap_S_StartSound( es->pos.trBase, es->number, CHAN_VOICE, cgs.media.zombieDeathSound );
 		} else {
 			trap_S_StartSound( es->pos.trBase, es->number, CHAN_VOICE, cgs.media.gibSound );
@@ -2307,7 +2463,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		break;
 	case EV_GIB_VAMPIRISM:
 		DEBUGNAME( "EV_GIB_VAMPIRISM" );
-		if ( es->aiChar == AICHAR_ZOMBIE ) {
+		if ( es->aiChar == AICHAR_ZOMBIE || es->aiChar == AICHAR_ZOMBIE_SURV || es->aiChar == AICHAR_ZOMBIE_FLAME || es->aiChar == AICHAR_ZOMBIE_GHOST ) {
 			trap_S_StartSound( es->pos.trBase, es->number, CHAN_VOICE, cgs.media.zombieDeathSound );
 		} else {
 			trap_S_StartSound( es->pos.trBase, es->number, CHAN_VOICE, cgs.media.gibSound );
@@ -2327,8 +2483,12 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		trap_S_StartSound( NULL, es->number, CHAN_WEAPON, 0 );  // kill weapon sound (could be reloading)
 
 		break;
-//----(SA)	end
+	case EV_STOP_RELOADING_SOUND:
+		DEBUGNAME( "EV_STOP_RELOADING_SOUND" );
 
+		trap_S_StartSoundEx(NULL, cg.snap->ps.clientNum, CHAN_WEAPON, cgs.media.nullSound, SND_CUTOFF);
+
+		break;
 	case EV_STOPLOOPINGSOUND:
 		DEBUGNAME( "EV_STOPLOOPINGSOUND" );
 		trap_S_StopLoopingSound( es->number );
@@ -2360,7 +2520,14 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 	{
 		int old;
 		old = cent->currentState.aiChar;
-		cent->currentState.aiChar = AICHAR_ZOMBIE;
+    // Add condition for AICHAR_ZOMBIE_SURV
+    if (cent->currentState.aiChar == AICHAR_ZOMBIE_SURV) {
+        cent->currentState.aiChar = AICHAR_ZOMBIE_SURV;
+    } else if (cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME) {
+        cent->currentState.aiChar = AICHAR_ZOMBIE_FLAME; 
+    } else {
+        cent->currentState.aiChar = AICHAR_ZOMBIE;
+    }
 
 		// shoot this only in bursts
 
@@ -2580,6 +2747,9 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 
 	case EV_SPAWN_SPIRIT:
 		CG_SpawnSpirit( cent );
+		break;
+	case EV_EMP_WAVE:
+		CG_SpawnEMPWave(cent);
 		break;
 
 	default:

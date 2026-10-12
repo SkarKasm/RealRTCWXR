@@ -136,6 +136,13 @@ void SV_SetConfigstring( int index, const char *val ) {
 	Z_Free( sv.configstrings[index] );
 	sv.configstrings[index] = CopyString( val );
 
+	if ( index == CS_TIMEDILATION ) {
+		sv.timeDilation = (float)atof( val );
+		if ( sv.timeDilation <= 0.0f ) {
+			sv.timeDilation = 0.01f; // never fully stop via this path; use SV_CheckPaused for true pause
+		}
+	}
+
 	// send it to all the clients if we aren't
 	// spawning a new server
 	if ( sv.state == SS_GAME || sv.restarting ) {
@@ -644,6 +651,8 @@ static void SV_ClearServer(void) {
 		}
 	}
 	Com_Memset( &sv, 0, sizeof( sv ) );
+	sv.timeDilation = 1.0f;
+	sv.timeDilationCarry = 0.0f;
 }
 
 /*
@@ -785,7 +794,7 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 	// Ridah, check for loading a saved game
 	if ( Cvar_VariableIntegerValue( "savegame_loading" ) ) {
 		// open the current savegame, and find out what the time is, everything else we can ignore
-		char *savemap = "save/current.svg";
+		char *savemap = "save/current_realrtcw.svg";
 		byte *buffer;
 		int size, savegameTime;
 

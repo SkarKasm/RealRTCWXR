@@ -44,6 +44,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "../botlib/botai.h"          //bot ai interface
 
 #include "ai_cast.h"
+#include "g_survival.h"
 
 // Skill-based behavior parameters
 behaviorskill_t behaviorSkill[GSKILL_NUM_SKILLS][NUM_CHARACTERS];
@@ -587,7 +588,209 @@ AICharacterDefaults_t aiDefaults[NUM_CHARACTERS] = {
 		NULL,
 		AISTATE_ALERT
 	},
+
+	//AICHAR_ZOMBIE_SURV
+	{
+		"Zombie Surv",
+		{ // Default
+			0
+		},
+		{
+			"zombieSightPlayer",
+			"zombieAttackPlayer",
+			"zombieOrders",
+			"zombieDeath",
+			"zombieSilentDeath",				//----(SA)	added
+			"zombieFlameDeath",					//----(SA)	added
+			"zombiePain",
+			"sound/weapons/melee/fstatck.wav",	// stay - you're told to stay put
+			"sound/weapons/melee/fstmiss.wav",	// follow - go with ordering player ("i'm with you" rather than "yes sir!")
+			"zombieOrdersDeny",					// deny - refuse orders (doing something else)
+		},
+		AITEAM_MONSTER,
+		"zombie/default",
+		{WP_MONSTER_ATTACK3},
+		BBOX_SMALL, {32,48},
+		/*AIFL_NOPAIN|AIFL_WALKFORWARD|*/ AIFL_NO_RELOAD,
+		AIFunc_ZombieFlameAttackStart, AIFunc_ZombieAttack2Start, AIFunc_ZombieMeleeStart,
+		NULL,
+		AISTATE_ALERT
+	},
+
+	//AICHAR_ZOMBIE_GHOST
+	{
+		"Zombie Ghost",
+		{ // Default
+			0
+		},
+		{
+			"zombieSightPlayer",
+			"zombieAttackPlayer",
+			"zombieOrders",
+			"zombieDeath",
+			"zombieSilentDeath",				//----(SA)	added
+			"zombieFlameDeath",					//----(SA)	added
+			"zombiePain",
+			"sound/weapons/melee/fstatck.wav",	// stay - you're told to stay put
+			"sound/weapons/melee/fstmiss.wav",	// follow - go with ordering player ("i'm with you" rather than "yes sir!")
+			"zombieOrdersDeny",					// deny - refuse orders (doing something else)
+		},
+		AITEAM_MONSTER,
+		"zombie/ghost",
+		{ WP_MONSTER_ATTACK2, WP_MONSTER_ATTACK3},
+		BBOX_SMALL, {32,48},
+		/*AIFL_NOPAIN|AIFL_WALKFORWARD|*/ AIFL_NO_RELOAD,
+		AIFunc_ZombieFlameAttackStart, AIFunc_ZombieAttack2Start, AIFunc_ZombieMeleeStart,
+		NULL,
+		AISTATE_ALERT
+	},
+
+
+	//AICHAR_ZOMBIE_FLAME
+	{
+		"Zombie Flame",
+		{ // Default
+			0
+		},
+		{
+			"zombieSightPlayer",
+			"zombieAttackPlayer",
+			"zombieOrders",
+			"zombieDeath",
+			"zombieSilentDeath",				//----(SA)	added
+			"zombieFlameDeath",					//----(SA)	added
+			"zombiePain",
+			"sound/weapons/melee/fstatck.wav",	// stay - you're told to stay put
+			"sound/weapons/melee/fstmiss.wav",	// follow - go with ordering player ("i'm with you" rather than "yes sir!")
+			"zombieOrdersDeny",					// deny - refuse orders (doing something else)
+		},
+		AITEAM_MONSTER,
+		"zombie/default",
+		{WP_MONSTER_ATTACK1},
+		BBOX_SMALL, {32,48},
+		/*AIFL_NOPAIN|AIFL_WALKFORWARD|*/ AIFL_NO_RELOAD,
+		AIFunc_ZombieFlameAttackStart, AIFunc_ZombieAttack2Start, AIFunc_ZombieMeleeStart,
+		NULL,
+		AISTATE_ALERT
+	},
+
+	//AICHAR_LOPER_SPECIAL
+	{
+		"Loper Special",
+		{ // Default
+			0
+		},
+		{
+			"loperSightPlayer",
+			"loperAttackPlayer",
+			"loperOrders",
+			"loperDeath",
+			"loperSilentDeath",		//----(SA)	added
+			"loperFlameDeath",		//----(SA)	added
+			"loperPain",
+			"loperAttack2Start",	// stay - you're told to stay put
+			"loperAttackStart",		// follow - go with ordering player ("i'm with you" rather than "yes sir!")
+			"loperHit1",			// deny - refuse orders (doing something else)
+			"loperHit2",			// misc1
+		},
+		AITEAM_MONSTER,
+		"loper/default_survival",
+		{ /*WP_MONSTER_ATTACK1,*/ WP_MONSTER_ATTACK2,WP_MONSTER_ATTACK3},
+		BBOX_SMALL, {32,32},		// large is for wide characters
+		AIFL_NO_RELOAD,
+		0 /*AIFunc_LoperAttack1Start*/, AIFunc_LoperAttack2Start, AIFunc_LoperAttack3Start,
+		"sound/world/electloop.wav",
+		AISTATE_ALERT
+	},
+
+
+	//AICHAR_MERCENARY
+	{
+		"Mercenary",
+		{ // Default
+			0
+		},
+		{
+			"mercSightPlayer",
+			"mercAttackPlayer",
+			"mercOrders",
+			"mercDeath",
+			"mercSilentDeath",				//----(SA)	added
+			"mercFlameDeath",				//----(SA)	added
+			"mercPain",
+			"mercStay",						// stay - you're told to stay put
+			"mercFollow",					// follow - go with ordering player ("i'm with you" rather than "yes sir!")
+			"mercOrdersDeny",				// deny - refuse orders (doing something else)
+		},
+		AITEAM_NAZI,							// team
+		"merc/default",					// default model/skin
+		{WP_MP40,WP_GRENADE_LAUNCHER},			// starting weapons
+		BBOX_SMALL, {32,48},					// bbox, crouch/stand height
+		AIFL_CATCH_GRENADE | AIFL_STAND_IDLE2,	// flags
+		0, 0, 0,								// special attack routine
+		NULL,									// looping sound
+		AISTATE_RELAXED
+	},
+
+		//AICHAR_TRENCH
+	{
+		"Trench",
+		{ // Default
+			0
+		},
+		{
+			"infantrySightPlayer",
+			"infantryAttackPlayer",
+			"infantryOrders",
+			"infantryDeath",
+			"infantrySilentDeath",				//----(SA)	added
+			"infantryFlameDeath",				//----(SA)	added
+			"infantryPain",
+			"infantryStay",						// stay - you're told to stay put
+			"infantryFollow",					// follow - go with ordering player ("i'm with you" rather than "yes sir!")
+			"infantryOrdersDeny",				// deny - refuse orders (doing something else)
+		},
+		AITEAM_NAZI,							// team
+		"trench/base1",					        // default model/skin
+		{WP_M97,WP_GRENADE_LAUNCHER},			// starting weapons
+		BBOX_SMALL, {32,48},					// bbox, crouch/stand height
+		AIFL_CATCH_GRENADE | AIFL_STAND_IDLE2,	// flags
+		0, 0, 0,								// special attack routine
+		NULL,									// looping sound
+		AISTATE_RELAXED
+	},
+
+	//AICHAR_ZOMBIE_SURV
+	{
+		"Flesh",
+		{ // Default
+			0
+		},
+		{
+			"fleshSightPlayer",
+			"fleshAttackPlayer",
+			"flehOrders",
+			"fleshDeath",
+			"fleshSilentDeath",				//----(SA)	added
+			"fleshFlameDeath",					//----(SA)	added
+			"fleshPain",
+			"sound/weapons/melee/fstatck.wav",	// stay - you're told to stay put
+			"sound/weapons/melee/fstmiss.wav",	// follow - go with ordering player ("i'm with you" rather than "yes sir!")
+			"fleshOrdersDeny",					// deny - refuse orders (doing something else)
+		},
+		AITEAM_MONSTER,
+		"flesh/lab",
+		{WP_MONSTER_ATTACK3},
+		BBOX_SMALL, {32,48},
+		AIFL_NO_RELOAD,
+		AIFunc_ZombieFlameAttackStart, AIFunc_ZombieAttack2Start, AIFunc_ZombieMeleeStart,
+		NULL,
+		AISTATE_ALERT
+	},
+
 };
+
+
 //---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------
@@ -619,19 +822,6 @@ void AIChar_SetBBox( gentity_t *ent, cast_state_t *cs, qboolean useHeadTag ) {
 		VectorCopy( bbmins[cs->aasWorldIndex], ent->client->ps.mins );
 		VectorCopy( bbmaxs[cs->aasWorldIndex], ent->client->ps.maxs );
 
-		// dirty hack
-        if (cs->aiCharacter == AICHAR_PRIEST )
-		{
-        ent->client->ps.mins [0] += 20;
-		ent->client->ps.maxs [0] += 20;
-		}	
-        if (cs->aiCharacter == AICHAR_XSHEPHERD )
-		{
-        ent->client->ps.mins [0] -= 40;
-		ent->client->ps.maxs [0] -= 20;
-		}
-		// dirty hack end
-
 		ent->client->ps.maxs[2] = aiDefaults[cs->aiCharacter].crouchstandZ[1];
 		VectorCopy( ent->client->ps.mins, ent->r.mins );
 		VectorCopy( ent->client->ps.maxs, ent->r.maxs );
@@ -653,19 +843,6 @@ void AIChar_SetBBox( gentity_t *ent, cast_state_t *cs, qboolean useHeadTag ) {
 		VectorCopy( bbmins[cs->aasWorldIndex], bbox[0] );
 		VectorCopy( bbmaxs[cs->aasWorldIndex], bbox[1] );
 		// set the head tag height
-
-		// dirty hack
-        if (cs->aiCharacter == AICHAR_PRIEST )
-		{
-        bbox [0][0] += 20;
-		bbox [1][0] += 20;
-		}
-        if (cs->aiCharacter == AICHAR_XSHEPHERD )
-		{
-        bbox [0][0] -= 40;
-		bbox [1][0] -= 20;
-		}	
-		// dirty hack end
 
 		bbox[1][2] = or.origin[2];
 
@@ -695,24 +872,34 @@ void AIChar_SetBBox( gentity_t *ent, cast_state_t *cs, qboolean useHeadTag ) {
 AIChar_Death
 ============
 */
-void AIChar_Death( gentity_t *ent, gentity_t *attacker, int damage, int mod ) { //----(SA)	added mod
+void AIChar_Death(gentity_t *ent, gentity_t *attacker, int damage, int mod)
+{ //----(SA)	added mod
 	// need this check otherwise sound will overwrite gib message
-	if ( ent->health > GIB_HEALTH  ) {
-		if ( ent->client->ps.eFlags & EF_HEADSHOT ) {
-			G_AddEvent( ent, EV_GENERAL_SOUND, G_SoundIndex( aiDefaults[ent->aiCharacter].soundScripts[QUIETDEATHSOUNDSCRIPT] ) );
-		} else {
-			switch ( mod ) {               //----(SA)	modified to add 'quiet' deaths
+	if (ent->health > GIB_HEALTH)
+	{
+		if (ent->client->ps.eFlags & EF_HEADSHOT)
+		{
+			if (g_gametype.integer == GT_SURVIVAL)
+			{
+				Survival_AddHeadshotBonus(attacker, ent);
+			}
+			G_AddEvent(ent, EV_GENERAL_SOUND, G_SoundIndex(aiDefaults[ent->aiCharacter].soundScripts[QUIETDEATHSOUNDSCRIPT]));
+		}
+		else
+		{
+			switch (mod)
+			{ //----(SA)	modified to add 'quiet' deaths
 			case MOD_KNIFE_STEALTH:
-			case MOD_DAGGER_STEALTH:
 			case MOD_SNIPERRIFLE:
 			case MOD_SNOOPERSCOPE:
-				G_AddEvent( ent, EV_GENERAL_SOUND, G_SoundIndex( aiDefaults[ent->aiCharacter].soundScripts[QUIETDEATHSOUNDSCRIPT] ) );
+				G_AddEvent(ent, EV_GENERAL_SOUND, G_SoundIndex(aiDefaults[ent->aiCharacter].soundScripts[QUIETDEATHSOUNDSCRIPT]));
 				break;
 			case MOD_FLAMETHROWER:
-				G_AddEvent( ent, EV_GENERAL_SOUND, G_SoundIndex( aiDefaults[ent->aiCharacter].soundScripts[FLAMEDEATHSOUNDSCRIPT] ) );      //----(SA)	added
+			case MOD_FLAMETRAP:
+				G_AddEvent(ent, EV_GENERAL_SOUND, G_SoundIndex(aiDefaults[ent->aiCharacter].soundScripts[FLAMEDEATHSOUNDSCRIPT])); //----(SA)	added
 				break;
 			default:
-				G_AddEvent( ent, EV_GENERAL_SOUND, G_SoundIndex( aiDefaults[ent->aiCharacter].soundScripts[DEATHSOUNDSCRIPT] ) );
+				G_AddEvent(ent, EV_GENERAL_SOUND, G_SoundIndex(aiDefaults[ent->aiCharacter].soundScripts[DEATHSOUNDSCRIPT]));
 				break;
 			}
 		}
@@ -830,7 +1017,7 @@ void AIChar_Pain( gentity_t *ent, gentity_t *attacker, int damage, vec3_t point 
 	// now check the damageQuota to see if we should play a pain animation
 	// first reduce the current damageQuota with time
 	if ( cs->damageQuotaTime && cs->damageQuota > 0 ) {
-		cs->damageQuota -= (int)( ( 1.0 + ( g_gameskill.value / GSKILL_REALISM ) ) * ( (float)( level.time - cs->damageQuotaTime ) / 1000 ) * ( 7.5 + cs->attributes[ATTACK_SKILL] * 10.0 ) );
+		cs->damageQuota -= (int)( ( 1.0 + ( g_gameskill.value / GSKILL_SURVIVAL ) ) * ( (float)( level.time - cs->damageQuotaTime ) / 1000 ) * ( 7.5 + cs->attributes[ATTACK_SKILL] * 10.0 ) );
 		if ( cs->damageQuota < 0 ) {
 			cs->damageQuota = 0;
 		}
@@ -843,13 +1030,13 @@ void AIChar_Pain( gentity_t *ent, gentity_t *attacker, int damage, vec3_t point 
 		if ( scale > 4.0 ) {
 			scale = 4.0;
 		}
-		damage = (int)( (float)damage * ( 1.0 + ( scale * ( 1.0 - 0.5 * g_gameskill.value / GSKILL_REALISM ) ) ) );
+		damage = (int)( (float)damage * ( 1.0 + ( scale * ( 1.0 - 0.5 * g_gameskill.value / GSKILL_SURVIVAL ) ) ) );
 	}
 
 	// adjust the new damage with distance, if they are really close, scale it down, to make it
 	// harder to get through the game by continually rushing the enemies
 	if ( ( attacker->s.weapon != WP_TESLA  && attacker->s.weapon != WP_HOLYCROSS ) && ( ( dist = VectorDistance( ent->r.currentOrigin, attacker->r.currentAngles ) ) < 384 ) ) {
-		damage -= (int)( (float)damage * ( 1.0 - ( dist / 384.0 ) ) * ( 0.5 + 0.5 * g_gameskill.value / GSKILL_REALISM ) );
+		damage -= (int)( (float)damage * ( 1.0 - ( dist / 384.0 ) ) * ( 0.5 + 0.5 * g_gameskill.value / GSKILL_SURVIVAL ) );
 	}
 
 	// add the new damage
@@ -914,7 +1101,7 @@ void AIChar_Pain( gentity_t *ent, gentity_t *attacker, int damage, vec3_t point 
 		cs->damageQuota = 0;
 		cs->damageQuotaTime = 0;
 		//
-		cs->painSoundTime = cs->pauseTime + (int)( 1000 * ( g_gameskill.value / GSKILL_REALISM ) );     // add a bit more of a buffer before the next one
+		cs->painSoundTime = cs->pauseTime + (int)( 1000 * ( g_gameskill.value / GSKILL_SURVIVAL ) );     // add a bit more of a buffer before the next one
 	}
 
 }
@@ -1074,9 +1261,15 @@ void AIChar_spawn( gentity_t *ent ) {
 	// create the character
 
 	// (there will always be an ent->aiSkin (SA)) AAAS
-	BG_SetBehaviorForSkill( ent->aiCharacter, g_gameskill.integer );
-	newent = AICast_CreateCharacter( ent, aiCharDefaults->attributes, &weaponInfo, aiCharDefaults->name, ent->aiSkin, ent->aihSkin, "m", "7", "100" );
-
+	if (g_gametype.integer == GT_SURVIVAL && !ent->oneshot )
+	{
+		BG_SetBehaviorForSurvival(ent->aiCharacter);
+	}
+	else
+	{
+		BG_SetBehaviorForSkill(ent->aiCharacter, g_gameskill.integer);
+	}
+	newent = AICast_CreateCharacter(ent, aiCharDefaults->attributes, &weaponInfo, aiCharDefaults->name, ent->aiSkin, ent->aihSkin, "m", "7", "100");
 
 	if ( !newent ) {
 		G_FreeEntity( ent );
@@ -1095,9 +1288,11 @@ void AIChar_spawn( gentity_t *ent ) {
 	newent->spawnflags = ent->spawnflags;
 	newent->aiTeam = ent->aiTeam;
 	newent->canSpeak = ent->canSpeak;
+	newent->oneshot = ent->oneshot;
 	if ( newent->aiTeam < 0 ) {
 		newent->aiTeam = aiCharDefaults->aiTeam;
 	}
+	G_FixupEntityTeamNum( ent );
 	newent->client->ps.teamNum = newent->aiTeam;
 	//
 	// kill the old entity
@@ -1540,6 +1735,98 @@ void SP_ai_blackguard( gentity_t *ent ) {
 	AICast_DelayedSpawnCast( ent, AICHAR_BLACKGUARD );
 }
 
+/*
+============
+SP_ai_zombie_surv
+============
+*/
+void SP_ai_zombie_surv( gentity_t *ent ) {
+	ent->r.svFlags |= SVF_NOFOOTSTEPS;
+	AICast_DelayedSpawnCast( ent, AICHAR_ZOMBIE_SURV );
+}
+
+/*
+============
+SP_ai_zombie_flame
+============
+*/
+void SP_ai_zombie_flame( gentity_t *ent ) {
+	ent->r.svFlags |= SVF_NOFOOTSTEPS;
+	AICast_DelayedSpawnCast( ent, AICHAR_ZOMBIE_FLAME );
+}
+
+/*
+============
+SP_ai_zombie_ghost
+============
+*/
+void SP_ai_zombie_ghost( gentity_t *ent ) {
+	ent->r.svFlags |= SVF_NOFOOTSTEPS;
+	AICast_DelayedSpawnCast( ent, AICHAR_ZOMBIE_GHOST );
+}
+
+/*
+============
+SP_ai_loper_special
+============
+*/
+void SP_ai_loper_special( gentity_t *ent ) {
+	ent->r.svFlags |= SVF_NOFOOTSTEPS;
+	AICast_DelayedSpawnCast( ent, AICHAR_LOPER_SPECIAL );
+	//
+	level.loperZapSound = G_SoundIndex( "loperZap" );
+}
+
+
+//----------------------------------------------------------------------------------------------------------------------------
+/*QUAKED ai_mercenary (1 0.25 0) (-16 -16 -24) (16 16 64) TriggerSpawn NoRevive
+soldier entity
+"skin" the .skin file to use for this character (must exist in the player characters directory, otherwise 'infantryss/default' is used)
+"head" the .skin file to use for his head (must exist in the pc's dir, otherwise 'default' is used)
+"ainame" name of AI
+*/
+/*
+-------- MODEL FOR RADIANT ONLY - DO NOT SET THIS AS A KEY --------
+model="models\mapobjects\characters\test\nazi.md3"
+*/
+/*
+============
+SP_ai_mercenary
+============
+*/
+void SP_ai_mercenary( gentity_t *ent ) {
+	AICast_DelayedSpawnCast( ent, AICHAR_MERCENARY );
+}
+
+//----------------------------------------------------------------------------------------------------------------------------
+/*QUAKED ai_trench (1 0.25 0) (-16 -16 -24) (16 16 64) TriggerSpawn NoRevive
+soldier entity
+"skin" the .skin file to use for this character (must exist in the player characters directory, otherwise 'infantryss/default' is used)
+"head" the .skin file to use for his head (must exist in the pc's dir, otherwise 'default' is used)
+"ainame" name of AI
+*/
+/*
+-------- MODEL FOR RADIANT ONLY - DO NOT SET THIS AS A KEY --------
+model="models\mapobjects\characters\test\nazi.md3"
+*/
+/*
+============
+SP_ai_trench
+============
+*/
+void SP_ai_trench( gentity_t *ent ) {
+	AICast_DelayedSpawnCast( ent, AICHAR_TRENCH );
+}
+
+/*
+============
+SP_ai_flesh
+============
+*/
+void SP_ai_flesh( gentity_t *ent ) {
+	AICast_DelayedSpawnCast( ent, AICHAR_FLESH );
+}
+
 // Load behavior parameters from .aidefaults file
 void AI_LoadBehaviorTable( AICharacters_t characterNum )
 {
@@ -1580,9 +1867,13 @@ char *BG_GetCharacterFilename( AICharacters_t characterNum )
 		case AICHAR_SOLDIER:           return "soldier.aidefaults";
 		case AICHAR_AMERICAN:          return "american.aidefaults";
 		case AICHAR_ZOMBIE:            return "zombie.aidefaults";
+		case AICHAR_ZOMBIE_SURV:       return "zombie_surv.aidefaults";
+		case AICHAR_ZOMBIE_FLAME:      return "zombie_flame.aidefaults";
+		case AICHAR_ZOMBIE_GHOST:      return "zombie_ghost.aidefaults";
 		case AICHAR_WARZOMBIE:         return "warzombie.aidefaults";
 		case AICHAR_VENOM:             return "venom.aidefaults";
 		case AICHAR_LOPER:             return "loper.aidefaults";
+		case AICHAR_LOPER_SPECIAL:     return "loper_special.aidefaults";
 		case AICHAR_ELITEGUARD:        return "eliteguard.aidefaults";
 		case AICHAR_SUPERSOLDIER:      return "supersoldier.aidefaults";
 		case AICHAR_SUPERSOLDIER_LAB:  return "supersoldier_lab.aidefaults";
@@ -1596,6 +1887,9 @@ char *BG_GetCharacterFilename( AICharacters_t characterNum )
 		case AICHAR_DOG:               return "dog.aidefaults";
 		case AICHAR_PRIEST:            return "priest.aidefaults";
 		case AICHAR_XSHEPHERD:         return "xshepherd.aidefaults";
+		case AICHAR_MERCENARY:         return "merc.aidefaults";
+		case AICHAR_TRENCH:            return "trench.aidefaults";
+		case AICHAR_FLESH:             return "flesh.aidefaults";
 		case AICHAR_NONE:              return "";
 		default:                       Com_Printf( "Missing filename entry for character id %d\n", characterNum );
     }

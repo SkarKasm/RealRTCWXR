@@ -79,8 +79,8 @@ If you have questions concerning this license or the applicable additional terms
 #define STAT_MINUS          10  // num frame for '-' stats digit
 
 #define ICON_SIZE           48
-#define CHAR_WIDTH          32
-#define CHAR_HEIGHT         48
+#define CHAR_WIDTH_CG       32
+#define CHAR_HEIGHT_CG      48
 #define TEXT_ICON_SPACE     4
 
 #define TEAMCHAT_WIDTH      80
@@ -91,6 +91,7 @@ If you have questions concerning this license or the applicable additional terms
 #define GIANT_HEIGHT        48
 
 #define NUM_CROSSHAIRS      11
+#define NUM_HITMARKERS    5
 
 // Ridah, trails
 #define STYPE_STRETCH   0
@@ -278,7 +279,25 @@ typedef struct {
 
 //=================================================
 
+// hitsounds flags
+/**
+ * @enum hitsooundFlags
+ * @brief
+ */
+typedef enum
+{
+	HITSOUNDS_ON         = 1,
+	HITSOUNDS_NOBODYSHOT = 2,
+	HITSOUNDS_NOHEADSHOT = 4,
+	HITSOUNDS_NOTEAMSHOT = 8,
+} hitsooundFlags;
 
+// hitMarker
+typedef struct {
+    qboolean	active;		// is drawing?
+    int			startTime;
+    hitEvent_t	hitType;
+} cg_hitMarker_t;
 
 // centity_t have a direct corespondence with gentity_t in the game, but
 // only the entityState_t is directly communicated to the cgame
@@ -418,7 +437,8 @@ typedef enum {
 	LE_ZOMBIE_BAT,
 	LE_MOVING_TRACER,
 	LE_EMITTER,
-	LE_SPIRIT_VIEWFLASH
+	LE_SPIRIT_VIEWFLASH,
+	LE_EMP_WAVE
 } leType_t;
 
 typedef enum {
@@ -496,6 +516,15 @@ typedef struct localEntity_s {
 	// done.
 
 } localEntity_t;
+
+typedef struct delayedBrass_s {
+	struct centity_s *centity;
+	int time;
+	void ( *ejectBrassFunc )( centity_t * );
+	struct delayedBrass_s *prev;
+	struct delayedBrass_s *next;
+
+} delayedBrass_t;
 
 //======================================================================
 
@@ -665,6 +694,8 @@ typedef struct weaponInfo_s {
 
 	qhandle_t handsSkin; // eugeny
     qhandle_t legskin;
+	qhandle_t upgradedSkin;
+	qhandle_t upgradedMapSkin;
 //----(SA)	end
 
 	qboolean droppedAnglesHack;
@@ -705,7 +736,7 @@ typedef struct weaponInfo_s {
 	vec3_t missileDlightColor;
 	int missileRenderfx;
 
-	void ( *ejectBrassFunc )( centity_t * );
+	void ( *ejectBrassFunc )( centity_t *, int delay );
 
 	float trailRadius;
 	float wiTrailTime;
@@ -757,6 +788,17 @@ typedef struct {
 	float radius;
 	vec3_t src;
 } cameraShake_t;
+
+typedef struct {
+    qboolean active;
+    int hoveredBank;
+    int hoveredWeapon;
+	float stickX;
+	float stickY;
+	int latchedWeapon;
+	int lastWeapon;
+    int openTime;
+} weaponWheel_t;
 
 //======================================================================
 
@@ -853,6 +895,7 @@ typedef struct {
 	int zoomTime;
 	float zoomSensitivity;
 	float zoomval;
+	qboolean isZoomed;
 
 
 	// information screen text during loading
@@ -889,11 +932,26 @@ typedef struct {
 	char centerPrint[1024];
 	int centerPrintLines;
 
+	int buyPrintTime;
+	int buyPrintCharWidth;
+	int buyPrintY;
+	char buyPrint[1024];
+	int buyPrintLines;
+
+	int egPrintTime;
+	int egPrintCharWidth;
+	int egPrintY;
+	char egPrint[1024];
+	int egPrintLines;
+
 	int subtitlePrintTime;
 	int subtitlePrintCharWidth;
 	int subtitlePrintY;
 	char subtitlePrint[1024];
 	int subtitlePrintLines;
+
+	// hitMarker
+	cg_hitMarker_t hitMarker;
 
 	// fade in/out
 	int fadeTime;
@@ -1064,6 +1122,19 @@ typedef struct {
 	float rumbleScale;          //RUMBLE FX using new shakeCamera code
 	pmoveExt_t pmext;
 
+	qboolean simpleZoomed;
+	int simpleZoomTime;
+	qboolean simpleZoomedFollow;        // last known networked zoom state of the player we're following/watching
+
+	float aaStrength;
+    float aaDYaw;
+    float aaDPitch;
+    int   aaEntNum;
+
+	float aaStrengthSmoothed;
+
+	weaponWheel_t weaponWheel;
+
 } cg_t;
 
 #define NUM_FUNNEL_SPRITES  21
@@ -1146,6 +1217,8 @@ typedef struct {
 	qhandle_t lagometerShader;
 	qhandle_t backTileShader;
 	qhandle_t noammoShader;
+
+	qhandle_t hitMarkerShader[NUM_HITMARKERS];
 
 	qhandle_t reticleShader;
 //	qhandle_t reticleShaderSimple;
@@ -1248,6 +1321,9 @@ typedef struct {
 	qhandle_t battleSuitShader;
 	qhandle_t battleWeaponShader;
 	qhandle_t hastePuffShader;
+
+	qhandle_t empRingShader;
+    qhandle_t empSparkShader;
 
 	// weapon effect models
 	qhandle_t spearModel;   //----(SA)
@@ -1448,6 +1524,9 @@ typedef struct {
 	sfxHandle_t bookSound;      //----(SA)	added
 	sfxHandle_t adrenalineSound;   //----(SA)	added
 	sfxHandle_t bandagesSound;
+	sfxHandle_t crossSound;
+	sfxHandle_t empSound;
+	sfxHandle_t shieldSound;
 	sfxHandle_t elecSound;
 	sfxHandle_t fireSound;
 	sfxHandle_t waterSound;
@@ -1469,6 +1548,11 @@ typedef struct {
 	sfxHandle_t debBounce2Sound;
 	sfxHandle_t debBounce3Sound;
 	//----(SA) end
+
+	// hitsounds
+	sfxHandle_t headShot;
+	sfxHandle_t bodyShot;
+	sfxHandle_t teamShot;
 
 	//----(SA)	added
 	sfxHandle_t grenadePulseSound4;
@@ -1540,7 +1624,12 @@ typedef struct {
 	qhandle_t sizeCursor;
 
 	sfxHandle_t poisonGasCough;
-	sfxHandle_t		knifeThrow;
+	sfxHandle_t knifeThrow;
+	sfxHandle_t nullSound;
+	
+	sfxHandle_t xshieldLoopSound;
+
+	qhandle_t perkProIcons[MAX_PERKS];
 
 } cgMedia_t;
 
@@ -1594,6 +1683,40 @@ extern soundScript_t soundScripts[MAX_SOUND_SCRIPTS];
 extern soundScript_t soundScripts[MAX_SOUND_SCRIPTS];
 
 
+// map speaker scripts (sound/maps/<mapname>.sps) -- point sound sources defined outside the BSP entity lump
+
+typedef enum {
+	SPKR_NOT_LOOPED = 0,
+	SPKR_LOOPED_ON,
+	SPKR_LOOPED_OFF
+} speakerLoopType_t;
+
+typedef enum {
+	SPKR_LOCAL = 0,
+	SPKR_GLOBAL,
+	SPKR_NOPVS
+} speakerBroadcastType_t;
+
+typedef struct {
+	char                    filename[MAX_QPATH];
+	sfxHandle_t             noise;
+	vec3_t                  origin;
+	char                    targetname[32];
+
+	speakerLoopType_t       loop;
+	speakerBroadcastType_t  broadcast;
+	int                     wait;           // ms between auto-plays (SPKR_NOT_LOOPED only)
+	int                     random;         // random variance added to wait
+	int                     volume;         // 0-255, default 127
+	int                     range;          // attenuation distance, default 1250
+
+	qboolean                activated;
+	int                     nextActivateTime;
+} scriptSpeaker_t;
+
+#define MAX_SCRIPT_SPEAKERS 256
+extern scriptSpeaker_t scriptSpeakers[MAX_SCRIPT_SPEAKERS];
+extern int             numScriptSpeakers;
 
 
 
@@ -1693,7 +1816,12 @@ typedef struct {
 	// player/AI model scripting (client repository)
 	animScriptData_t animScriptData;
 
+	// world time dilation (weapon wheel slow-mo), mirrors CS_TIMEDILATION, 1.0 = normal speed
+	float timeDilation;
+
 } cgs_t;
+
+
 
 //==============================================================================
 
@@ -1705,6 +1833,8 @@ extern itemInfo_t cg_items[MAX_ITEMS];
 extern markPoly_t cg_markPolys[MAX_MARK_POLYS];
 
 extern vmCvar_t cg_centertime;
+extern vmCvar_t cg_buyprinttime;
+extern vmCvar_t cg_egprinttime;
 
 extern vmCvar_t cg_bobbing;
 
@@ -1739,7 +1869,7 @@ extern vmCvar_t cg_crosshairX;
 extern vmCvar_t cg_crosshairY;
 extern vmCvar_t cg_crosshairSize;
 extern vmCvar_t cg_crosshairAlpha;          //----(SA)	added
-extern vmCvar_t cg_crosshairHealth;
+extern vmCvar_t cg_crosshairColoring;
 extern vmCvar_t cg_drawStatus;
 extern vmCvar_t cg_draw2D;
 extern vmCvar_t cg_drawSubtitles;
@@ -1853,6 +1983,8 @@ extern vmCvar_t cg_wolfparticles;
 
 // Ridah
 extern vmCvar_t cg_gameType;
+extern vmCvar_t cg_newinventory;
+extern vmCvar_t cg_overheal;
 extern vmCvar_t cg_bloodTime;
 extern vmCvar_t cg_norender;
 extern vmCvar_t cg_skybox;
@@ -1861,12 +1993,21 @@ extern vmCvar_t cg_skybox;
 extern vmCvar_t cg_gameSkill;
 // done
 
+extern vmCvar_t cg_hitSounds;
+
+// hit marker
+extern vmCvar_t cg_hitMarker;
+extern vmCvar_t cg_hitMarkerSize;
+extern vmCvar_t cg_hitMarkerAlpha;
+extern vmCvar_t cg_solidHitMarker;
+
 extern vmCvar_t cg_reloading;           //----(SA)	added
 
 // JPW NERVE
 extern vmCvar_t cg_medicChargeTime;
 extern vmCvar_t cg_engineerChargeTime;
 extern vmCvar_t cg_LTChargeTime;
+extern vmCvar_t cg_cvopsChargeTime;
 extern vmCvar_t cg_soldierChargeTime;
 extern vmCvar_t cg_redlimbotime;
 extern vmCvar_t cg_bluelimbotime;
@@ -1923,6 +2064,13 @@ extern vmCvar_t cg_gunPosLock;
 extern vmCvar_t cg_hudStyle;
 extern vmCvar_t	cg_weaponBounceSound;
 
+extern vmCvar_t cg_showSocials;
+extern vmCvar_t cg_gothic;
+
+extern vmCvar_t cg_simpleZoomFov;
+extern vmCvar_t cg_simpleZoomTimeMs;
+extern vmCvar_t cg_simpleZoomVenomScale;
+
 //
 // cg_main.c
 //
@@ -1940,8 +2088,10 @@ void CG_UpdateCvars( void );
 int CG_CrosshairPlayer( void );
 int CG_LastAttacker( void );
 void CG_LoadMenus( const char *menuFile );
+void CG_LoadHudMenu( void );
 void CG_KeyEvent( int key, qboolean down );
 void CG_MouseEvent( int x, int y );
+void CG_JoystickEvent( int axis, int value );
 void CG_EventHandling( int type );
 
 qboolean CG_GetTag( int clientNum, char *tagname, orientation_t * or );
@@ -2035,11 +2185,16 @@ void CG_AddLagometerSnapshotInfo( snapshot_t *snap );
 void CG_CenterPrint( const char *str, int y, int charWidth );
 void CG_BonusCenterPrint( const char *str, int y, int charWidth );
 void CG_SubtitlePrint( const char *str, int y, int charWidth );
+void CG_BuyPrint( const char *str, int y, int charWidth );
+void CG_EndGamePrint( const char *str, int y, int charWidth );
+void CG_HitMarker( hitEvent_t hitType );
 
 void CG_ObjectivePrint( const char *str, int charWidth, int team );     // NERVE - SMF
 void CG_DrawHead( float x, float y, float w, float h, int clientNum, vec3_t headAngles );
 void CG_DrawActive( stereoFrame_t stereoView );
 void CG_DrawFlagModel( float x, float y, float w, float h, int team );
+
+void CG_DrawWeaponWheel( void ) ;
 
 void CG_DrawTeamBackground( int x, int y, int w, int h, float alpha, int team );
 void CG_OwnerDraw( float x, float y, float w, float h, float text_x, float text_y, int ownerDraw, int ownerDrawFlags, int align, float special, int font, float scale, vec4_t color, qhandle_t shader, int textStyle );
@@ -2139,6 +2294,9 @@ void CG_PrevWeapon_f( void );
 void CG_Weapon_f( void );
 void CG_WeaponBank_f( void );
 void CG_WeaponSuggest( int weap );
+void CG_ResetSimpleZoom(void);
+
+extern int weapBanks[MAX_WEAP_BANKS][MAX_WEAPS_IN_BANK];
 
 void CG_FinishWeaponChange( int lastweap, int newweap );
 
@@ -2184,11 +2342,17 @@ void CG_DrawItemSelector(void);
 void CG_OutOfAmmoChange( void );
 void CG_HoldableUsedupChange( void ); //----(SA)	added
 
+void CG_UpdateWeaponWheelSelection( float cursorx, float cursory );
+
+int CG_CollectWeaponWheelWeapons( int *visibleWeapons, int maxWeapons );
+
 //----(SA) added to header to access from outside cg_weapons.c
 void CG_AddDebris( vec3_t origin, vec3_t dir, int speed, int duration, int count );
 //----(SA) done
 
 void CG_ClientDamage( int entnum, int enemynum, int id );
+
+void CG_UpdateAimAssist( void );
 
 void CG_AddBulletParticles( vec3_t origin, vec3_t dir, int speed, int duration, int count, float randScale );
 
@@ -2228,6 +2392,9 @@ void CG_ParticleExplosion( char *animStr, vec3_t origin, vec3_t vel, int duratio
 void    CG_SnowLink( centity_t *cent, qboolean particleOn );
 // done.
 
+
+void CG_SpawnEMPWave( centity_t *cent ) ;
+
 // Rafael bats
 void CG_ParticleBat( centity_t *cent );
 void    CG_ParticleBats( qhandle_t pshader, centity_t *cent );
@@ -2263,6 +2430,15 @@ void CG_SoundPlayIndexedScript( int index, vec3_t org, int entnum );
 void CG_SoundInit( void );
 // done.
 
+// map speaker scripts (sound/maps/<mapname>.sps)
+void CG_ClearScriptSpeakers( void );
+void CG_LoadSpeakerScript( void );
+void CG_AddScriptSpeakers( void );
+qboolean CG_AddScriptSpeaker( scriptSpeaker_t *speaker );
+qboolean CG_DeleteScriptSpeaker( int index );
+qboolean CG_SaveSpeakerScript( void );
+// done.
+
 // Ridah, flamethrower
 void CG_FireFlameChunks( centity_t *cent, vec3_t origin, vec3_t angles, float speedScale, qboolean firing, int flags ); //----(SA)	added 'flags'
 void CG_InitFlameChunks( void );
@@ -2277,8 +2453,8 @@ void CG_FlameDamage( int owner, vec3_t org, float radius );
 void    CG_InitLocalEntities( void );
 localEntity_t   *CG_AllocLocalEntity( void );
 void    CG_AddLocalEntities( void );
-//void    CG_FreeDelayedBrass( delayedBrass_t * );
-//void    CG_AllocDelayedBrass( centity_t *, int, void ( *ejectBrassFunc )( centity_t * ) );
+void    CG_FreeDelayedBrass( delayedBrass_t * );
+void    CG_AllocDelayedBrass( centity_t *, int, void ( *ejectBrassFunc )( centity_t * ) );
 
 //
 // cg_effects.c
@@ -2469,6 +2645,8 @@ int         trap_CM_MarkFragments( int numPoints, const vec3_t *points,
 // moves and the listener moves
 void        trap_S_StartSound( vec3_t origin, int entityNum, int entchannel, sfxHandle_t sfx );
 void        trap_S_StartSoundEx( vec3_t origin, int entityNum, int entchannel, sfxHandle_t sfx, int flags );
+void        trap_S_StartSoundVControl( vec3_t origin, int entityNum, int entchannel, sfxHandle_t sfx, int volume );
+qboolean    trap_R_inPVS( const vec3_t p1, const vec3_t p2 );
 void        trap_S_StopLoopingSound( int entnum );
 void        trap_S_StopStreamingSound( int entnum );  // usually AI.  character is talking and needs to be shut up /now/
 
@@ -2574,7 +2752,7 @@ int         trap_GetCurrentCmdNumber( void );
 qboolean    trap_GetUserCmd( int cmdNumber, usercmd_t *ucmd );
 
 // used for the weapon/holdable select and zoom
-void        trap_SetUserCmdValue( int stateValue, int holdValue, float sensitivityScale, int cld );     // NERVE - SMF - added cld
+void trap_SetUserCmdValue( int weapon, int holdable, float sensitivityScale, int cld, qboolean isZoomed, float aaStrength, float aaDYaw, float aaDPitch );
 
 // aids for VM testing
 void        testPrintInt( char *string, int i );
@@ -2637,3 +2815,5 @@ qboolean    trap_GetModelInfo( int clientNum, char *modelName, animModelInfo_t *
 
 // New in IORTCW
 void		*trap_Alloc( int size );
+
+qhandle_t   trap_R_RegisterSmartSkin( const char *name, const char *mapName, qboolean upgraded );

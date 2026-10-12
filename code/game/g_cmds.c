@@ -27,6 +27,9 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 #include "g_local.h"
+#include "g_survival.h"
+
+#include "../steam/steam.h"
 #include "bg_local.h"
 
 #include <VrClientInfo.h>
@@ -241,8 +244,6 @@ void Cmd_Fogswitch_f( void ) {
 	G_setfog( ConcatArgs( 1 ) );
 }
 
-//----(SA)	end
-
 /*
 ==================
 Cmd_Give_f
@@ -294,31 +295,22 @@ void Cmd_Give_f( gentity_t *ent ) {
 	}
 
 	if ( give_all || Q_stricmp( name, "weapons" ) == 0 ) {
-		//ent->client->ps.weapons[0] = (1 << (WP_MONSTER_ATTACK1)) - 1 - (1<<WP_NONE);	//----(SA)	gives the cross now as well
 
 		//(SA) we really don't want to give anything beyond WP_HOLYCROSS
-		for ( i = 0; i <= WP_HOLYCROSS; i++ )
+		for ( i = 0; i <= WP_M7; i++ )
 			COM_BitSet( ent->client->ps.weapons, i );
 
-//		for (i=0; i<WP_NUM_WEAPONS; i++) {
-//			switch (i) {
-//			case WP_MONSTER_ATTACK1:
-//			case WP_MONSTER_ATTACK2:
-//			case WP_MONSTER_ATTACK3:
-//			case WP_NONE:
-//				break;
-//			default:
-//				COM_BitSet( ent->client->ps.weapons, i );
-//			}
-//		}
 		if ( !give_all ) {
 			return;
 		}
 	}
 
 	if ( give_all || Q_stricmp( name, "holdable" ) == 0 ) {
-		ent->client->ps.stats[STAT_HOLDABLE_ITEM] = ( 1 << ( HI_LP_SYRINGE - 1 ) ) - 1 - ( 1 << HI_NONE );
-		for ( i = 1 ; i <= HI_LP_SYRINGE ; i++ ) {
+		for ( int j = HI_WINE; j < HI_HUD_VISIBLE_END; j++ ) {
+			ent->client->ps.stats[STAT_HOLDABLE_ITEM] |= (1 << j);
+		}
+
+		for ( i = 1 ; i < HI_HUD_VISIBLE_END ; i++ ) {
 			ent->client->ps.holdable[i] = 10;
 		}
 
@@ -338,6 +330,17 @@ void Cmd_Give_f( gentity_t *ent ) {
 		}
 
 		if ( !give_all ) {
+			return;
+		}
+	}
+
+	if (give_all || Q_stricmpn(name, "score", 5) == 0) {
+		if (amount > 0) {
+			ent->client->ps.persistant[PERS_SCORE] += amount;
+		} else {
+			ent->client->ps.persistant[PERS_SCORE] += 9999;
+		}
+		if (!give_all) {
 			return;
 		}
 	}
@@ -396,6 +399,42 @@ void Cmd_Give_f( gentity_t *ent ) {
 	}
 }
 
+
+/*
+==================
+Cmd_reset_stats
+
+Resets Steam Achievements
+==================
+*/
+void Cmd_reset_stats( gentity_t *ent ) {
+    int clientNum;
+
+    if ( !ent || !ent->client ) {
+        return;
+    }
+
+    clientNum = (int)( ent - g_entities );
+
+	if ( !CheatsOk( ent ) ) {
+		return;
+	}
+
+    // 10-second confirm window
+    if ( ent->client->pers.resetStatsConfirmTime < level.time ) {
+        ent->client->pers.resetStatsConfirmTime = level.time + 10000;
+        trap_SendServerCommand( clientNum,
+            "print \"WARNING: This will reset ALL Steam achievements/stats. Type reset_stats again within 10 seconds to confirm.\\n\"" );
+        return;
+    }
+
+    // confirmed
+    ent->client->pers.resetStatsConfirmTime = 0;
+
+    steamResetStats( 1 );
+
+    trap_SendServerCommand( clientNum, "print \"All Steam Achievements were successfully reset!\\n\"" );
+}
 
 /*
 ==================
@@ -1238,17 +1277,18 @@ void Cmd_StopCamera_f( gentity_t *ent ) {
 		ent->s.eFlags &= ~EF_VIEWING_CAMERA;
 		ent->client->ps.eFlags &= ~EF_VIEWING_CAMERA;
 
-// (SA) trying this in client to avoid 1 frame of player drawing
-//		ent->s.eFlags &= ~EF_NODRAW;
-//		ent->client->ps.eFlags &= ~EF_NODRAW;
-
-		// RF, if we are near the spawn point, save the "current" game, for reloading after death
 		sp = NULL;
-		// gcc: suggests () around assignment used as truth value
-		while ( ( sp = G_Find( sp, FOFS( classname ), "info_player_deathmatch" ) ) ) { // info_player_start becomes info_player_deathmatch in it's spawn functon
+		while ( ( sp = G_Find( sp, FOFS( classname ), "info_player_deathmatch" ) ) ) {
 			if ( Distance( ent->s.pos.trBase, sp->s.origin ) < 256 && trap_InPVS( ent->s.pos.trBase, sp->s.origin ) ) {
-				G_SaveGame( NULL );
-				G_SaveGame( "lastcheckpoint" );
+
+				// Don't save checkpoint in Survival mode
+				if ( g_gametype.integer != GT_SURVIVAL ) {
+					G_SaveGame( NULL );
+					G_SaveGame( "lastcheckpoint" );
+					trap_Cvar_Set( "g_checkpointReady", "1" );
+					trap_Cvar_Set( "g_levelSelectPending", "0" );
+				}
+
 				break;
 			}
 		}
@@ -1343,7 +1383,6 @@ qboolean G_ThrowChair( gentity_t *ent, vec3_t dir, qboolean force ) {
 
 	return ( isthrown || force );
 }
-
 
 // Rafael
 /*
@@ -1980,7 +2019,8 @@ void ClientDamage( gentity_t *clent, int entnum, int enemynum, int id ) {
 		G_Damage( ent, enemy, enemy, vec3_origin, vec3_origin, 3 + rand() % 3, DAMAGE_NO_KNOCKBACK, MOD_EXPLOSIVE );
 		break;
 	case CLDMG_SPIRIT:
-			if ( enemy->aiCharacter == AICHAR_ZOMBIE ) {
+			if ( enemy->aiCharacter == AICHAR_ZOMBIE || enemy->aiCharacter == AICHAR_ZOMBIE_SURV || enemy->aiCharacter == AICHAR_ZOMBIE_FLAME 
+				|| enemy->aiCharacter == AICHAR_ZOMBIE_GHOST ) {
 				G_Damage( ent, enemy, enemy, vec3_origin, vec3_origin, 6, DAMAGE_NO_KNOCKBACK, MOD_ZOMBIESPIRIT );
 			} else {
 				G_Damage( ent, enemy, enemy, vec3_origin, vec3_origin, 8 + rand() % 4, DAMAGE_NO_KNOCKBACK, MOD_ZOMBIESPIRIT );
@@ -1995,21 +2035,80 @@ void ClientDamage( gentity_t *clent, int entnum, int enemynum, int id ) {
 		break;
 	case CLDMG_TESLA:
 
-		if (    ( ent->aiCharacter == AICHAR_PROTOSOLDIER ) ||
-				( ent->aiCharacter == AICHAR_SUPERSOLDIER ) ||
-				( ent->aiCharacter == AICHAR_SUPERSOLDIER_LAB ) ||
-				( ent->aiCharacter == AICHAR_LOPER ) || 
-				( ent->aiCharacter == AICHAR_PRIEST ) ) {
+		if ((ent->aiCharacter == AICHAR_PROTOSOLDIER) ||
+			(ent->aiCharacter == AICHAR_SUPERSOLDIER) ||
+			(ent->aiCharacter == AICHAR_SUPERSOLDIER_LAB) ||
+			(ent->aiCharacter == AICHAR_LOPER) ||
+			(ent->aiCharacter == AICHAR_LOPER_SPECIAL) ||
+			(ent->aiCharacter == AICHAR_PRIEST))
+		{
 			break;
 		}
 
-		if ( ent->takedamage /*&& !AICast_NoFlameDamage(ent->s.number)*/ ) {
-			VectorSubtract( ent->r.currentOrigin, enemy->r.currentOrigin, vec );
-			VectorNormalize( vec );
-			if ( !( enemy->r.svFlags & SVF_CASTAI ) ) {
-				G_Damage( ent, enemy, enemy, vec, ent->r.currentOrigin, ammoTable[WP_TESLA].playerDamage, 0, MOD_LIGHTNING );
-			} else {
-				G_Damage( ent, enemy, enemy, vec, ent->r.currentOrigin, ammoTable[WP_TESLA].aiDamage, 0, MOD_LIGHTNING );
+		if (ent->takedamage /*&& !AICast_NoFlameDamage(ent->s.number)*/)
+		{
+			VectorSubtract(ent->r.currentOrigin, enemy->r.currentOrigin, vec);
+			VectorNormalize(vec);
+
+			if (!(enemy->r.svFlags & SVF_CASTAI))
+			{
+				// Player Tesla damage — apply upgrade multiplier if upgraded
+				int dmg;
+				if (enemy->client && enemy->client->ps.weaponUpgraded[WP_TESLA])
+				{
+					dmg = ammoTable[WP_TESLA].playerDamageUpgraded;
+				}
+				else
+				{
+					dmg = ammoTable[WP_TESLA].playerDamage;
+				}
+				G_Damage(ent, enemy, enemy, vec, ent->r.currentOrigin, dmg, 0, MOD_LIGHTNING);
+					// If Tesla is upgraded, apply burn effect like flamethrower
+				if (enemy->client && enemy->client->ps.weaponUpgraded[WP_TESLA])
+				{
+#define TESLA_BURN_THRESHOLD 5 // minimal threshold to trigger burning
+
+					int flameQuota = ammoTable[WP_TESLA].playerDamage; // or some static flame damage
+
+					// reduce existing flameQuota over time
+					if (ent->flameQuotaTime && ent->flameQuota > 0)
+					{
+						ent->flameQuota -= (int)(((float)(level.time - ent->flameQuotaTime) / 1000.f) * (float)flameQuota / 2.0f);
+						if (ent->flameQuota < 0)
+						{
+							ent->flameQuota = 0;
+						}
+					}
+
+					// add new flame damage
+					ent->flameQuota += flameQuota;
+					ent->flameQuotaTime = level.time;
+
+					if (ent->client && (ent->health <= 0 || ent->flameQuota > TESLA_BURN_THRESHOLD))
+					{
+						if (ent->s.onFireEnd < level.time)
+						{
+							ent->s.onFireStart = level.time;
+						}
+
+						// Duration of burn (match flamethrower)
+						if (ent->r.svFlags & SVF_CASTAI)
+						{
+							ent->s.onFireEnd = level.time + 6000;
+						}
+						else
+						{
+							ent->s.onFireEnd = level.time + FIRE_FLASH_TIME;
+						}
+
+						ent->flameBurnEnt = enemy->s.number;
+						ent->client->ps.onFireStart = level.time;
+					}
+				}
+			}
+			else
+			{
+				G_Damage(ent, enemy, enemy, vec, ent->r.currentOrigin, ammoTable[WP_TESLA].aiDamage, 0, MOD_LIGHTNING);
 			}
 		}
 		break;
@@ -2064,15 +2163,38 @@ void ClientDamage( gentity_t *clent, int entnum, int enemynum, int id ) {
 		break;
 	case CLDMG_FLAMETHROWER:
 
+		if (ent->client && (ent->client->ps.powerups[PW_BATTLESUIT_SURV] || ent->client->ps.powerups[PW_XSHIELD] ) )
+		{
+			break; // Don't apply flamethrower effects
+		}
+
+		// Skip flame effects for dead entities in Survival mode
+		if (g_gametype.integer == GT_SURVIVAL && ent->client && ent->health <= 0)
+		{
+			break;
+		}
+
 		if ( ent->takedamage && !AICast_NoFlameDamage( ent->s.number ) ) {
 			#define FLAME_THRESHOLD 10
 
-			int damage = ammoTable[WP_FLAMETHROWER].playerDamage;	
+			int damage;
 
-
-			// RF, only do damage once they start burning
-			//if (ent->health > 0)	// don't explode from flamethrower
-			//	G_Damage( traceEnt, ent, ent, forward, tr.endpos, 1, 0, MOD_LIGHTNING);
+			if (!(enemy->r.svFlags & SVF_CASTAI))
+			{
+				if (enemy->client && enemy->client->ps.weaponUpgraded[WP_FLAMETHROWER])
+				{
+					damage = ammoTable[WP_FLAMETHROWER].playerDamageUpgraded;
+				}
+				else
+				{
+					damage = ammoTable[WP_FLAMETHROWER].playerDamage;
+				}
+			}
+			else
+			{
+				// AI attacker
+				damage = ammoTable[WP_FLAMETHROWER].aiDamage;
+			}
 
 			// now check the damageQuota to see if we should play a pain animation
 			// first reduce the current damageQuota with time
@@ -2096,7 +2218,7 @@ void ClientDamage( gentity_t *clent, int entnum, int enemynum, int id ) {
 					if ( ent->r.svFlags & SVF_CASTAI ) {
 						ent->s.onFireEnd = level.time + 6000;
 					} else {
-						ent->s.onFireEnd = level.time + FIRE_FLASH_TIME;
+						ent->s.onFireEnd = level.time + 1000;
 					}
 				} else {
 					ent->s.onFireEnd = level.time + 99999;  // make sure it goes for longer than they need to die
@@ -2280,6 +2402,13 @@ void ClientCommand( int clientNum ) {
 	}
 //----(SA)	end
 
+	if ( Q_stricmp( cmd, "simplezoom" ) == 0 ) {
+		char arg[8];
+		trap_Argv( 1, arg, sizeof( arg ) );
+		ent->client->ps.simpleZoomed = atoi( arg ) ? qtrue : qfalse;
+		return;
+	}
+
 	// ignore all other commands when at intermission
 	if ( level.intermissiontime ) {
 		Cmd_Say_f( ent, qfalse, qtrue );
@@ -2290,6 +2419,8 @@ void ClientCommand( int clientNum ) {
 		Cmd_Give_f( ent );
 	} else if ( Q_stricmp( cmd, "god" ) == 0 )  {
 		Cmd_God_f( ent );
+	} else if ( Q_stricmp( cmd, "reset_stats" ) == 0 )  {
+		Cmd_reset_stats( ent );
 	} else if ( Q_stricmp( cmd, "nofatigue" ) == 0 )  {
 		Cmd_Nofatigue_f( ent );
 	} else if ( Q_stricmp( cmd, "notarget" ) == 0 )  {
@@ -2310,6 +2441,10 @@ void ClientCommand( int clientNum ) {
 		Cmd_Team_f( ent );
 	} else if ( Q_stricmp( cmd, "where" ) == 0 )  {
 		Cmd_Where_f( ent );
+	} else if ( Q_stricmp( cmd, "wwheel" ) == 0 )  {
+		char arg[8];
+		trap_Argv( 1, arg, sizeof( arg ) );
+		ent->client->pers.weaponWheelOpen = ( atoi( arg ) != 0 );
 	}
 //	else if (Q_stricmp (cmd, "callvote") == 0)	//----(SA)	id requests these gone in sp
 //		Cmd_CallVote_f (ent);

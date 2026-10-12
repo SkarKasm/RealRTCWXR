@@ -265,6 +265,14 @@ void    trap_S_StartSoundEx( vec3_t origin, int entityNum, int entchannel, sfxHa
 }
 //----(SA)	end
 
+void    trap_S_StartSoundVControl( vec3_t origin, int entityNum, int entchannel, sfxHandle_t sfx, int volume ) {
+	syscall( CG_S_STARTSOUNDVCONTROL, origin, entityNum, entchannel, sfx, volume );
+}
+
+qboolean    trap_R_inPVS( const vec3_t p1, const vec3_t p2 ) {
+	return syscall( CG_R_INPVS, p1, p2 );
+}
+
 void    trap_S_StartLocalSound( sfxHandle_t sfx, int channelNum ) {
 	syscall( CG_S_STARTLOCALSOUND, sfx, channelNum );
 }
@@ -477,8 +485,17 @@ qboolean    trap_GetUserCmd( int cmdNumber, usercmd_t *ucmd ) {
 	return syscall( CG_GETUSERCMD, cmdNumber, ucmd );
 }
 
-void        trap_SetUserCmdValue( int stateValue, int holdableValue, float sensitivityScale, int cld ) {    //----(SA)	// NERVE - SMF - added cld
-	syscall( CG_SETUSERCMDVALUE, stateValue, holdableValue, PASSFLOAT( sensitivityScale ), cld );
+void trap_SetUserCmdValue( int stateValue, int holdableValue, float sensitivityScale, int cld, qboolean isZoomed,
+                           float aaStrength, float aaDYaw, float aaDPitch ) {    // NERVE - SMF - added cld
+    syscall( CG_SETUSERCMDVALUE,
+             stateValue,
+             holdableValue,
+             PASSFLOAT( sensitivityScale ),
+             cld,
+             isZoomed,
+             PASSFLOAT( aaStrength ),
+             PASSFLOAT( aaDYaw ),
+             PASSFLOAT( aaDPitch ) );
 }
 
 void        testPrintInt( char *string, int i ) {
@@ -628,4 +645,8 @@ int trap_Vibrate(int duration, int channel, float intensity, char* description, 
 // New in IORTCW
 void *trap_Alloc( int size ) {
 	return (void*)syscall( CG_ALLOC, size );
+}
+
+qhandle_t trap_R_RegisterSmartSkin( const char *name, const char *mapName, qboolean upgraded ) {
+	return syscall( CG_R_REGISTERSMARTSKIN, name, mapName, upgraded );
 }

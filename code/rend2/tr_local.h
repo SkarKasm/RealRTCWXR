@@ -1576,7 +1576,7 @@ SmileTheory - for pshadows
 */
 
 #define	QSORT_FOGNUM_SHIFT	2
-#define	QSORT_REFENTITYNUM_SHIFT	11
+#define	QSORT_REFENTITYNUM_SHIFT	8	// RealRTCW XR: 8, so 11 entity bits + 11 shader bits still fit in 32
 #define	QSORT_SHADERNUM_SHIFT	(QSORT_REFENTITYNUM_SHIFT+REFENTITYNUM_BITS)
 #if (QSORT_SHADERNUM_SHIFT+SHADERNUM_BITS) > 32
 	#error "Need to update sorting, too many bits."
@@ -1585,7 +1585,7 @@ SmileTheory - for pshadows
 #define QSORT_PSHADOW_SHIFT     1
 
 // GR - tessellation flag in bit 8
-#define QSORT_ATI_TESS_SHIFT    8
+#define QSORT_ATI_TESS_SHIFT    7
 // GR - TruForm flags
 #define ATI_TESS_TRUFORM    1
 #define ATI_TESS_NONE       0
@@ -2339,6 +2339,7 @@ void        RE_LoadWorldMap( const char *mapname );
 void        RE_SetWorldVisData( const byte *vis );
 qhandle_t   RE_RegisterModel( const char *name );
 qhandle_t   RE_RegisterSkin( const char *name );
+qhandle_t   RE_RegisterSmartSkin( const char *name, const char *mapName, qboolean upgraded );
 void        RE_Shutdown( qboolean destroyWindow );
 
 qboolean    R_GetEntityToken( char *buffer, int size );

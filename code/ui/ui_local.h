@@ -129,6 +129,10 @@ extern vmCvar_t ui_browserShowFull;
 extern vmCvar_t ui_browserShowEmpty;
 
 extern vmCvar_t ui_serverStatusTimeOut;
+extern vmCvar_t ui_sv_enemies;
+extern vmCvar_t ui_camp_chapter;
+extern vmCvar_t ui_camp_bonusmode;
+extern vmCvar_t ui_midgame;
 // -NERVE - SMF
 
 //
@@ -378,6 +382,7 @@ void            UI_ShowPostGame( qboolean newHigh );
 void            UI_ClearScores( void );
 void            UI_LoadArenas( void );
 void		UI_LoadArenasIntoMapList( void );
+void		UI_ResolveArenaLongnames( void );
 
 //
 // ui_menu.c
@@ -714,6 +719,12 @@ typedef struct {
 	const char *gameType;
 	int gtEnum;
 } gameTypeInfo;
+
+typedef enum {
+	SV_ENEMIES_FILTER_ALL = 0,
+	SV_ENEMIES_FILTER_HUMAN,
+	SV_ENEMIES_FILTER_UNDEAD
+} svEnemiesFilter_t;
 
 typedef struct {
 	const char *mapName;
@@ -1172,5 +1183,9 @@ void UI_SPUnlockMedals_f( void );
 void UI_InitGameinfo( void );
 
 void trap_openURL(const char *url);
+
+int UI_ParseArenaEnemiesType( const char *arenaInfo );
+
+qhandle_t       trap_R_RegisterSmartSkin( const char *name, const char *mapName, qboolean upgraded );
 
 #endif

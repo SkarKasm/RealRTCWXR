@@ -36,6 +36,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "tr_public.h"
 #include "qgl.h"
 #include "iqm.h"
+#include "tr_fbo.h"
 
 #define GLE(ret, name, ...) extern name##proc * qgl##name;
 QGL_1_1_PROCS;
@@ -43,6 +44,8 @@ QGL_1_1_FIXED_FUNCTION_PROCS;
 QGL_DESKTOP_1_1_PROCS;
 QGL_DESKTOP_1_1_FIXED_FUNCTION_PROCS;
 QGL_3_0_PROCS;
+QGL_ARB_framebuffer_object_PROCS;
+QGL_ARB_vertex_fragment_program_PROCS;
 #undef GLE
 
 #ifdef USE_OPENGLES
@@ -60,11 +63,11 @@ typedef unsigned short glIndex_t;
 typedef unsigned int glIndex_t;
 #endif
 
-// 11 bits
+// 14 bits
 // can't be increased without changing bit packing for drawsurfs
 // see QSORT_SHADERNUM_SHIFT
 
-#define SHADERNUM_BITS	11
+#define SHADERNUM_BITS	14
 #define MAX_SHADERS		(1<<SHADERNUM_BITS)
 
 // a trRefEntity_t has all the information passed in by
@@ -612,7 +615,7 @@ typedef enum {
 } surfaceType_t;
 
 typedef struct drawSurf_s {
-	unsigned sort;                      // bit combination for fast compares
+    uint64_t     sort;     // was unsigned / uint32_t; now 64-bit
 	surfaceType_t       *surface;       // any of surface*_t
 } drawSurf_t;
 
@@ -901,8 +904,8 @@ void        R_Modellist_f( void );
 //====================================================
 extern refimport_t ri;
 
-#define MAX_DRAWIMAGES          2048
-#define MAX_SKINS               1024
+#define MAX_DRAWIMAGES          4096	// was 2048
+#define MAX_SKINS               2048	// was 1024
 
 
 #define MAX_DRAWSURFS           0x10000
@@ -943,15 +946,25 @@ removed	: used to be clipped flag
 
 */
 
-#define	QSORT_FOGNUM_SHIFT	2
-#define	QSORT_REFENTITYNUM_SHIFT	11
-#define	QSORT_SHADERNUM_SHIFT	(QSORT_REFENTITYNUM_SHIFT+REFENTITYNUM_BITS)
-#if (QSORT_SHADERNUM_SHIFT+SHADERNUM_BITS) > 32
-	#error "Need to update sorting, too many bits."
+#define DLIGHTMAP_BITS         2
+#define FOG_BITS               5
+
+#define QSORT_DLIGHTMAP_SHIFT      0
+#define QSORT_FOGNUM_SHIFT         2
+#define QSORT_ATI_TESS_SHIFT       8
+#define QSORT_REFENTITYNUM_SHIFT   11
+#define QSORT_SHADERNUM_SHIFT      (QSORT_REFENTITYNUM_SHIFT + REFENTITYNUM_BITS)
+
+// Compile-time guard: total bits must fit in 64
+#if (QSORT_SHADERNUM_SHIFT + SHADERNUM_BITS) > 64
+#  error "Need to update sorting, too many bits for 64-bit key."
 #endif
 
-// GR - tessellation flag in bit 8
-#define QSORT_ATI_TESS_SHIFT    8
+// Helpful masks (64-bit)
+#define QSORT_DLIGHTMAP_MASK   ((uint64_t)((1u << DLIGHTMAP_BITS) - 1))
+#define QSORT_FOGNUM_MASK      ((uint64_t)((1u << FOG_BITS) - 1))
+#define QSORT_SHADERNUM_MASK   ((uint64_t)((1u << SHADERNUM_BITS) - 1))
+
 // GR - TruForm flags
 #define ATI_TESS_TRUFORM    1
 #define ATI_TESS_NONE       0
@@ -1024,6 +1037,45 @@ typedef struct {
 	trRefEntity_t entity2D;     // currentEntity will point at this when doing 2D rendering
 } backEndState_t;
 
+
+static ID_INLINE qboolean IsRedDominant(byte r, byte g, byte b) {
+    // R must be the dominant channel
+    int maxc = r; if (g > maxc) maxc = g; if (b > maxc) maxc = b;
+    if (r != maxc) return qfalse;
+
+    // Too dark? skip (prevents noisy low-light reds from triggering)
+    //if (maxc < 1) return qfalse; // was 72; higher == stricter
+
+    // Require decent saturation: (max - min) / max >= ~0.55
+    int minc = r; if (g < minc) minc = g; if (b < minc) minc = b;
+    //int chroma = maxc - minc;
+    //if (chroma * 256 < maxc * 140) return qfalse; // 140/256 ≈ 0.55
+
+    // Reject orange/yellow: g/r must be small enough (g/r <= ~0.38)
+    if ((int)g * 100 > (int)r * 38) return qfalse;
+
+    // Reject magenta/pink: b/r must be smallish too (b/r <= ~0.45)
+    //if ((int)b * 100 > (int)r * 45) return qfalse;
+
+    return qtrue;
+}
+
+// gothicMode: 1 = force pure red, 2 = keep original red intensity
+static ID_INLINE void ApplyNoirRed(byte *dstR, byte *dstG, byte *dstB,
+                                   byte srcR, byte srcG, byte srcB,
+                                   int gothicMode) {
+	(void)srcG; (void)srcB; // unused but kept for symmetry
+	if (gothicMode == 2) {
+		*dstR = srcR;
+		*dstG = 0;
+		*dstB = 0;
+	} else {
+		*dstR = 255;
+		*dstG = 0;
+		*dstB = 0;
+	}
+}
+
 /*
 ** trGlobals_t
 **
@@ -1056,6 +1108,8 @@ typedef struct {
 	image_t                 *whiteImage;            // full of 0xff
 	image_t                 *identityLightImage;    // full of tr.identityLightByte
 
+	FBO_t                   *mainFbo;               // offscreen render target when \r_fbo 1, see tr_fbo.c
+
 	shader_t                *defaultShader;
 	shader_t                *shadowShader;
 	shader_t		*projectionShadowShader;
@@ -1073,7 +1127,7 @@ typedef struct {
 	trRefEntity_t           *currentEntity;
 	trRefEntity_t worldEntity;                  // point currentEntity at this when rendering world
 	int currentEntityNum;
-	int shiftedEntityNum;                       // currentEntityNum << QSORT_REFENTITYNUM_SHIFT
+    uint64_t shiftedEntityNum;                    // currentEntityNum << QSORT_REFENTITYNUM_SHIFT
 	model_t                 *currentModel;
 
 	viewParms_t viewParms;
@@ -1081,6 +1135,7 @@ typedef struct {
 	float identityLight;                        // 1.0 / ( 1 << overbrightBits )
 	int identityLightByte;                      // identityLight * 255
 	int overbrightBits;                         // r_overbrightBits->integer, but set to 0 if no hw gamma
+	float invGamma;                             // 1.0 / r_gamma->value, applied by the \r_fbo gamma ARB fragment program
 
 	orientationr_t          or;                 // for current entity
 
@@ -1131,12 +1186,38 @@ typedef struct {
 	// RF, temp var used while parsing shader only
 	int allowCompress;
 
+	qboolean supportsNPOT;
+
 } trGlobals_t;
 
 extern backEndState_t backEnd;
 extern trGlobals_t tr;
 extern glconfig_t glConfig;         // outside of TR since it shouldn't be cleared during ref re-init
 extern glstate_t glState;           // outside of TR since it shouldn't be cleared during ref re-init
+
+// capability flags for extensions not covered by glconfig_t, detected by GLimp_InitExtraExtensions() (tr_extensions.c)
+typedef struct {
+	qboolean	framebufferObject;      // GL_ARB_framebuffer_object
+	int			maxRenderbufferSize;
+	int			maxColorAttachments;
+	qboolean	framebufferBlit;
+	qboolean	framebufferMultisample;
+
+	qboolean	arbPrograms;            // GL_ARB_vertex_program + GL_ARB_fragment_program
+} glRefConfig_t;
+
+extern glRefConfig_t glRefConfig;
+
+// generic ARB assembly program compile/bind helpers, see tr_arb.c
+qboolean ARB_CompileProgram( GLenum target, const char *text, GLuint program );
+void     ARB_ProgramEnable( GLuint vp, GLuint fp );
+void     ARB_ProgramDisable( void );
+qboolean GL_ProgramAvailable( void );
+
+// gamma-correction ARB program used by the \r_fbo pipeline, see tr_arb.c
+void     ARB_InitPrograms( void );
+void     ARB_ShutdownPrograms( void );
+void     FBO_PostProcess( void );
 
 // These two variables should live inside glConfig but can't because of compatibility issues to the original ID vms.
 // If you release a stand-alone game and your mod uses tr_types.h from this build you can safely move them to
@@ -1177,6 +1258,8 @@ extern cvar_t   *r_texturebits;         // number of desired texture bits
 										// 32 = use 32-bit textures
 										// all else = error
 extern cvar_t	*r_ext_multisample;
+
+extern cvar_t   *r_fbo;                 // render into an offscreen FBO instead of directly to the backbuffer, see tr_fbo.c
 
 extern cvar_t   *r_measureOverdraw;     // enables stencil buffer overdraw measurement
 
@@ -1284,6 +1367,7 @@ extern	cvar_t	*r_stereoEnabled;
 extern	cvar_t	*r_anaglyphMode;
 
 extern	cvar_t	*r_greyscale;
+extern  cvar_t  *r_gothic;
 
 extern cvar_t  *r_ignoreGLErrors;
 
@@ -1310,6 +1394,9 @@ extern cvar_t   *r_wolffog;
 // done
 
 extern cvar_t  *r_highQualityVideo;
+
+extern byte s_intensitytable[256];
+extern unsigned char s_gammatable[256];
 //====================================================================
 
 float R_NoiseGet4f( float x, float y, float z, double t );
@@ -1330,7 +1417,7 @@ void R_TagInfo_f( void );
 void R_AddPolygonSurfaces( void );
 
 // GR - add tessellation flag
-void R_DecomposeSort( unsigned sort, int *entityNum, shader_t **shader,
+void R_DecomposeSort( uint64_t sort, int *entityNum, shader_t **shader,
 					  int *fogNum, int *dlightMap, int *atiTess );
 
 // GR - add tessellation flag
@@ -1405,6 +1492,7 @@ void        RE_LoadWorldMap( const char *mapname );
 void        RE_SetWorldVisData( const byte *vis );
 qhandle_t   RE_RegisterModel( const char *name );
 qhandle_t   RE_RegisterSkin( const char *name );
+qhandle_t   RE_RegisterSmartSkin( const char *name, const char *mapName, qboolean upgraded );
 void        RE_Shutdown( qboolean destroyWindow );
 
 qboolean    R_GetEntityToken( char *buffer, int size );
@@ -1477,10 +1565,13 @@ void	GLimp_EndFrame( void );
 
 void	GLimp_LogComment( char *comment );
 void	GLimp_Minimize(void);
+qboolean	GLimp_IsMinimized(void);
 
 void	GLimp_SetGamma( unsigned char red[256],
 					 unsigned char green[256],
 					 unsigned char blue[256] );
+
+void	GLimp_InitExtraExtensions( void );
 
 
 /*
@@ -1917,7 +2008,7 @@ void RE_StretchPic( float x, float y, float w, float h,
 void RE_StretchPicGradient( float x, float y, float w, float h,
 							float s1, float t1, float s2, float t2, qhandle_t hShader, const float *gradientColor, int gradientType );
 void RE_BeginFrame( stereoFrame_t stereoFrame );
-void RE_EndFrame(int *frontEndMsec, int *backEndMsec );
+void RE_EndFrame( int *frontEndMsec, int *backEndMsec );
 void RE_SubmitStereoFrame();
 void RE_SaveJPG(char * filename, int quality, int image_width, int image_height,
                 unsigned char *image_buffer, int padding);
@@ -1977,6 +2068,23 @@ void R_MDC_DecodeXyzCompressed( mdcXyzCompressed_t *xyzComp, vec3_t out, vec3_t 
 	( out )[2] = ( (float)( ( ofsVec >> 16 ) & 255 ) - MDC_MAX_OFS ) * MDC_DIST_SCALE; \
 	VectorCopy( ( r_anormals )[( ofsVec >> 24 )], normal );
 #endif
+
+static ID_INLINE qboolean R_UseSoftwareGamma( void ) {
+	// FBO_PostProcess() applies gamma live every frame in this case; don't also bake it in
+	if ( fboEnabled && GL_ProgramAvailable() ) {
+		return qfalse;
+	}
+	return !glConfig.deviceSupportsGamma;
+}
+
+static ID_INLINE byte R_GammaByte( byte c ) {
+	if ( !R_UseSoftwareGamma() ) {
+		return c;
+	}
+
+	return s_gammatable[c];
+}
+
 
 void R_AddMDCSurfaces( trRefEntity_t *ent );
 // done.

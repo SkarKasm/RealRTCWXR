@@ -34,6 +34,12 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 #include "g_local.h"
+#include "g_survival.h"
+
+#include <pthread.h>
+#include <unistd.h>
+
+#include "../steam/steam.h"
 
 extern vec3_t muzzleTrace; // used by falloff mechanic
 
@@ -45,9 +51,20 @@ Adds score to both the client and his team
 ============
 */
 void AddScore( gentity_t *ent, int score ) {
+	if ( !ent->client ) {
+		return;
+	}
+	// no scoring during pre-match warmup
+	if ( level.warmupTime ) {
+		return;
+	}
 
-	return;
-	
+	if ( g_gametype.integer != GT_SURVIVAL ) {
+		return;
+	}
+
+	ent->client->ps.persistant[PERS_SCORE] += score;
+
 }
 
 
@@ -56,122 +73,101 @@ extern qboolean G_ThrowChair( gentity_t *ent, vec3_t dir, qboolean force );
 
 /*
 =================
-TossClientItems
+TossClientWeapons
 
-Toss the weapon and powerups for the killed player
+Toss the weapon and powerups for the killed entity
 =================
 */
-void TossClientItems( gentity_t *self ) {
-	gitem_t     *item;
+void TossClientWeapons( gentity_t *self )
+{
+	gitem_t *item;
 	vec3_t forward;
 	int weapon;
-	float angle;
-	int i;
-	gentity_t   *drop = 0;
+	gentity_t *drop = 0;
 
 	// drop the weapon if not a gauntlet or machinegun
 	weapon = self->s.weapon;
-    
-    if ( g_gametype.integer == GT_GOTHIC ) { // Gothicstein. Robots never drop weapons.
-	switch ( self->aiCharacter ) {
-	case AICHAR_ZOMBIE:
-	case AICHAR_WARZOMBIE:
-	case AICHAR_LOPER:
-	case AICHAR_PROTOSOLDIER:
-	case AICHAR_SUPERSOLDIER:
-	case AICHAR_SUPERSOLDIER_LAB:
-	case AICHAR_DOG:
-	case AICHAR_PRIEST:
-	case AICHAR_XSHEPHERD:
-		return;       
-	default:
-		break;
-	}
-	} else {  // Default case. Robots do drop weapons.
-	switch ( self->aiCharacter ) {
-	case AICHAR_ZOMBIE:
-	case AICHAR_WARZOMBIE:
-	case AICHAR_LOPER:
-	case AICHAR_DOG:
-	case AICHAR_PRIEST:
-	case AICHAR_XSHEPHERD:
-		return;       
-	default:
-		break;
-	} 
+
+	if (g_gametype.integer == GT_SURVIVAL)
+	{
+		return;
 	}
 
-	AngleVectors( self->r.currentAngles, forward, NULL, NULL );
+		switch (self->aiCharacter)
+		{
+		case AICHAR_ZOMBIE:
+		case AICHAR_WARZOMBIE:
+		case AICHAR_FLESH:
+		case AICHAR_LOPER:
+		case AICHAR_LOPER_SPECIAL:
+		case AICHAR_DOG:
+		case AICHAR_PRIEST:
+		case AICHAR_XSHEPHERD:
+			return;
+		default:
+			break;
+		}
+	
 
-	G_ThrowChair( self, forward, qtrue ); // drop chair if you're holding one  //----(SA)	added
+	AngleVectors(self->r.currentAngles, forward, NULL, NULL);
+
+	G_ThrowChair(self, forward, qtrue); // drop chair if you're holding one  //----(SA)	added
 
 	// make a special check to see if they are changing to a new
 	// weapon that isn't the mg or gauntlet.  Without this, a client
 	// can pick up a weapon, be killed, and not drop the weapon because
 	// their weapon change hasn't completed yet and they are still holding the MG.
 
-// (SA) always drop what you were switching to
-	if ( 1 ) {
-		if ( self->client->ps.weaponstate == WEAPON_DROPPING || self->client->ps.weaponstate == WEAPON_DROPPING_TORELOAD ) {
+	// (SA) always drop what you were switching to
+	if (1)
+	{
+		if (self->client->ps.weaponstate == WEAPON_DROPPING || self->client->ps.weaponstate == WEAPON_DROPPING_TORELOAD)
+		{
 			weapon = self->client->pers.cmd.weapon;
 		}
-		if ( !( COM_BitCheck( self->client->ps.weapons, weapon ) ) ) {
+		if (!(COM_BitCheck(self->client->ps.weapons, weapon)))
+		{
 			weapon = WP_NONE;
 		}
 	}
 
-//----(SA)	added
-	if ( weapon == WP_SNOOPERSCOPE ) {
+	//----(SA)	added
+	if (weapon == WP_SNOOPERSCOPE)
+	{
 		weapon = WP_GARAND;
 	}
-	if ( weapon == WP_FG42SCOPE ) {
+	if (weapon == WP_FG42SCOPE)
+	{
 		weapon = WP_FG42;
 	}
-	if ( weapon == WP_AKIMBO ) { //----(SA)	added
-		weapon = WP_COLT;
-	}
-	if ( weapon == WP_DUAL_TT33 ) { //----(SA)	added
-		weapon = WP_TT33;
-	}
-//----(SA)	end
 
-
-	if ( weapon > WP_NONE && weapon < WP_MONSTER_ATTACK1 && self->client->ps.ammo[ BG_FindAmmoForWeapon( weapon )] ) {
+	if (weapon > WP_NONE && weapon < WP_DUMMY_MG42 && self->client->ps.ammo[BG_FindAmmoForWeapon(weapon)])
+	{
 		// find the item type for this weapon
-		item = BG_FindItemForWeapon( weapon );
+		item = BG_FindItemForWeapon(weapon);
 		// spawn the item
 
 		// Rafael
-		if ( !( self->client->ps.persistant[PERS_HWEAPON_USE] ) ) {
-			drop = Drop_Item( self, item, 0, qfalse );
+		if (!(self->client->ps.persistant[PERS_HWEAPON_USE]))
+		{
+			drop = Drop_Item(self, item, 0, qfalse);
 		}
 	}
 
- // dropped items stay forever in SP
-		if ( drop ) {
+	// dropped items stay forever in SP
+	if (drop)
+	{
+		if (g_gametype.integer == GT_SURVIVAL)
+		{
+			drop->nextthink = level.time + 100000;
+		}
+		else
+		{
 			drop->nextthink = 0;
 		}
 
-		angle = 45;
-		for ( i = 1 ; i < PW_NUM_POWERUPS ; i++ ) {
-			if ( self->client->ps.powerups[ i ] > level.time ) {
-				item = BG_FindItemForPowerup( i );
-				if ( !item ) {
-					continue;
-				}
-				drop = Drop_Item( self, item, angle, qfalse );
-				// decide how many seconds it has left
-				drop->count = ( self->client->ps.powerups[ i ] - level.time ) / 1000;
-				if ( drop->count < 1 ) {
-					drop->count = 1;
-				}
-				drop->nextthink = 0;    // stay forever
-				angle += 45;
-			}
-		}
-	
+	}
 }
-
 
 /*
 ==================
@@ -242,7 +238,7 @@ void body_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int d
 		return;
 	}
 
-	if ( meansOfDeath == MOD_POISONGAS || meansOfDeath == MOD_KNIFE || meansOfDeath == MOD_THROWKNIFE  ) {
+	if ( meansOfDeath == MOD_POISONGAS || meansOfDeath == MOD_SMOKEBOMB || meansOfDeath == MOD_KNIFE || meansOfDeath == MOD_THROWKNIFE  ) {
 		self->health = GIB_HEALTH + 1;
 		return;
 	}
@@ -295,6 +291,7 @@ char    *modNames[] = {
 	"MOD_VENOM",
 	"MOD_VENOM_FULL",
 	"MOD_FLAMETHROWER",
+	"MOD_FLAMETRAP",
 	"MOD_TESLA",
 	"MOD_GRENADE_PINEAPPLE",
 	"MOD_CROSS",
@@ -334,6 +331,75 @@ char    *modNames[] = {
 	"MOD_BAT"
 };
 
+
+void *remove_powerup_after_delay2(void *arg) {
+    gentity_t *other = (gentity_t *)arg;
+
+    // Sleep for 30 seconds
+    sleep(30);
+
+    // Remove the FL_NOTARGET flag
+    other->flags &= ~FL_NOTARGET;
+
+    return NULL;
+}
+
+
+/*
+==================
+player_die_secondchance
+==================
+*/
+void player_die_secondchance( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int meansOfDeath ) {
+
+	int clientNum;
+	clientNum = level.sortedClients[0];
+
+	if ( self->client->ps.pm_type == PM_DEAD ) {
+		return;
+	}
+
+	if ( level.intermissiontime ) {
+		return;
+	}
+
+	if ( !g_cheats.integer ) 
+	{
+    steamSetAchievement("ACH_SECOND_CHANCE");
+	}
+
+	// Grant the player 200 health points
+    self->health = 200;
+
+	 // Grant the player invisibility powerup for a limited time (e.g., 30 seconds)
+    self->client->ps.powerups[PW_INVIS] = level.time + 30000;
+    G_AddPredictableEvent( self, EV_ITEM_PICKUP, BG_FindItemForClassName( "item_invis" ) - bg_itemlist );
+	self->flags |= FL_NOTARGET;
+    pthread_t thread_id;
+    pthread_create(&thread_id, NULL, remove_powerup_after_delay2, (void *)self);
+
+	// Remove perks depending on Second Chance level
+	if (self->client->ps.perks[PERK_SECONDCHANCE] >= 2)
+	{
+		// PRO: consume only Second Chance, keep all other perks
+		self->client->ps.perks[PERK_SECONDCHANCE] = 0;
+		self->client->ps.stats[STAT_PERK] &= ~(1 << PERK_SECONDCHANCE);
+	}
+	else
+	{
+		// BASE: lose everything
+		memset(self->client->ps.perks, 0, sizeof(self->client->ps.perks));
+		self->client->ps.stats[STAT_PERK] = 0;
+	}
+
+	 // Reset the player's state to prevent immediate death again
+    self->client->ps.pm_type = PM_NORMAL;
+    self->client->ps.stats[STAT_HEALTH] = self->health;
+
+	ClientUserinfoChanged( clientNum );
+
+}
+
 /*
 ==================
 player_die
@@ -348,6 +414,13 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 	char        *killerName, *obit;
 	qboolean nogib = qtrue;
 
+
+	// Check if the player has the PERK_SECONDCHANCE perk
+    if (self->client->ps.perks[PERK_SECONDCHANCE]) {
+        player_die_secondchance(self, inflictor, attacker, damage, meansOfDeath);
+        return;
+    }
+
 	if ( self->client->ps.pm_type == PM_DEAD ) {
 		return;
 	}
@@ -356,11 +429,8 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 		return;
 	}
 
-//----(SA) commented out as we have no hook
-//	if (self->client && self->client->hook)
-//		Weapon_HookFree(self->client->hook);
-
 	self->client->ps.pm_type = PM_DEAD;
+	self->client->pers.weaponWheelOpen = qfalse;
 
 	if ( attacker ) {
 		killer = attacker->s.number;
@@ -415,12 +485,9 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 	// Add team bonuses
 	Team_FragBonuses( self, inflictor, attacker );
 
-	// if client is in a nodrop area, don't drop anything
-// JPW NERVE new drop behavior
-
 		contents = trap_PointContents( self->r.currentOrigin, -1 );
 		if ( !( contents & CONTENTS_NODROP ) ) {
-			TossClientItems( self );
+			TossClientWeapons( self );
 		}
 
 	Cmd_Score_f( self );        // show scores
@@ -460,30 +527,38 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 
 	// don't allow respawn until the death anim is done
 	// g_forcerespawn may force spawning at some later time
-	self->client->respawnTime = level.time + 1700;
+	if (g_gametype.integer == GT_SURVIVAL)
+	{
+		self->client->respawnTime = level.time + 12000;
+
+		int wave = svParams.waveCount;
+		int enemiesKilled = svParams.survivalKillCount;
+
+		// This uses the exact same system as missionfail0, missionfail1, etc.
+		trap_SendServerCommand(self - g_entities,
+							   va("egp survival_gameover %d %d", wave, enemiesKilled));
+
+		trap_SendServerCommand(-1, "mu_play sound/music/l_finale.wav 0");
+		trap_SetConfigstring(CS_MUSIC_QUEUE, "");
+		trap_SetConfigstring(CS_MUSIC, ""); // extra safety
+	}
+	else
+	{
+		self->client->respawnTime = level.time + 1700;
+		trap_SendServerCommand(-1, "mu_play sound/music/l_failed_1.wav 0\n");
+		trap_SetConfigstring(CS_MUSIC_QUEUE, ""); // clear queue so it'll be quiet after hit
+		trap_SendServerCommand(-1, "cp missionfail0");
+	}
 
 	// remove powerups
-	memset( self->client->ps.powerups, 0, sizeof( self->client->ps.powerups ) );
-
-	trap_SendServerCommand( -1, "mu_play sound/music/l_failed_1.wav 0\n" );
-	trap_SetConfigstring( CS_MUSIC_QUEUE, "" );  // clear queue so it'll be quiet after hit
-	trap_SendServerCommand( -1, "cp missionfail0" );
-
-
+	memset(self->client->ps.powerups, 0, sizeof(self->client->ps.powerups));
 
 	// never gib in a nodrop
 	contents = trap_PointContents( self->r.currentOrigin, -1 );
 
 	if ( self->health <= GIB_HEALTH && !( contents & CONTENTS_NODROP ) && g_blood.integer ) {
-//		if(self->client->ps.eFlags & EF_HEADSHOT)
-//		{
-//			GibHead(self, killer);
-//		}
-//		else	// gib death
-//		{
 		GibEntity( self, killer );
 		nogib = qfalse;
-//		}
 	}
 
 	if ( nogib ) {
@@ -509,9 +584,7 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 			self->health = GIB_HEALTH + 1;
 		}
 
-// JPW NERVE for medic
 		self->client->medicHealAmt = 0;
-// jpw
 
 		self->client->ps.legsAnim =
 			( ( self->client->ps.legsAnim & ANIM_TOGGLEBIT ) ^ ANIM_TOGGLEBIT ) | anim;
@@ -606,17 +679,26 @@ qboolean IsHeadShotWeapon( int mod, gentity_t *targ, gentity_t *attacker ) {
 	    }
 	}
 
-	switch ( targ->aiCharacter ) {
+	/*switch (targ->aiCharacter)
+	{
 	// get out quick for ai's that don't take headshots
 	case AICHAR_ZOMBIE:
+	case AICHAR_ZOMBIE_SURV:
+	case AICHAR_ZOMBIE_FLAME:
+	case AICHAR_ZOMBIE_GHOST:
 	case AICHAR_WARZOMBIE:
-	case AICHAR_HELGA:     
+	case AICHAR_HELGA:
 	case AICHAR_LOPER:
-	case AICHAR_VENOM:      
-	return qfalse;
+	case AICHAR_LOPER_SPECIAL:
+	case AICHAR_VENOM:
+		if (g_gametype.integer != GT_SURVIVAL)
+		{
+			return qfalse;
+		}
+		break;
 	default:
-	break;
-	}
+		break;
+	}*/
 
 	switch ( mod ) {
 	// players are allowed headshots from these weapons
@@ -627,7 +709,6 @@ qboolean IsHeadShotWeapon( int mod, gentity_t *targ, gentity_t *attacker ) {
 	case MOD_MP40:
 	case MOD_MP34:
 	case MOD_TT33:
-	case MOD_P38:
 	case MOD_HDM:
 	case MOD_PPSH:
 	case MOD_MOSIN:
@@ -646,6 +727,7 @@ qboolean IsHeadShotWeapon( int mod, gentity_t *targ, gentity_t *attacker ) {
 	case MOD_FG42SCOPE:
 	case MOD_SNOOPERSCOPE:
 	case MOD_DELISLE:
+	case MOD_DELISLESCOPE:
 	case MOD_SNIPERRIFLE:
 	case MOD_BROWNING:
 	case MOD_MG42M:
@@ -861,11 +943,21 @@ dflags		these flags are used to control how T_Damage works
 */
 
 void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
-			   vec3_t dir, vec3_t point, int damage, int dflags, int mod ) {
+				vec3_t dir, vec3_t point, int damage, int dflags, int mod ) {
+	G_DamageExt( targ, inflictor, attacker, dir, point, damage, dflags, mod, NULL );
+}
+
+void G_DamageExt( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
+			   vec3_t dir, vec3_t point, int damage, int dflags, int mod, int *hitEventOut ) {
 	gclient_t   *client;
 	int take;
 	int asave;
 	int knockback;
+	int hitEventType = HIT_NONE;
+
+	if ( hitEventOut ) {
+		*hitEventOut = HIT_NONE;
+	}
 
 	if ( !targ->takedamage ) {
 		return;
@@ -993,6 +1085,12 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 		}
 	}
 
+	if ( client && client->ps.powerups[PW_XSHIELD] ) {
+		G_AddEvent( targ, EV_POWERUP_XSHIELD, 0 );
+		return;
+	}
+
+
 	if ( !dir ) {
 		dflags |= DAMAGE_NO_KNOCKBACK;
 	} else {
@@ -1013,6 +1111,14 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 	if ( dflags & DAMAGE_NO_KNOCKBACK ) {
 		knockback = 0;
 	}
+
+	// cant push big guys. too heavy. Survival only.
+	if (g_gametype.integer == GT_SURVIVAL ) {
+	if (targ->aiCharacter == AICHAR_HEINRICH || targ->aiCharacter == AICHAR_HELGA || targ->aiCharacter == AICHAR_PROTOSOLDIER || targ->aiCharacter == AICHAR_SUPERSOLDIER || targ->aiCharacter == AICHAR_SUPERSOLDIER_LAB)
+	{
+		knockback = 0;
+	}
+    }
 
 	// figure momentum add, even if the damage won't be taken
 	if ( knockback && targ->client ) {
@@ -1083,15 +1189,30 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 
 	}
 
+	// add to the attacker's hit counter (but only if target is a client)
+	if ( attacker && attacker->client && targ->client  && targ != attacker && mod != MOD_SUICIDE ) {
+		if ( OnSameTeam( targ, attacker ) /*|| ( targ->client->ps.powerups[PW_OPS_DISGUISED]*/ && g_friendlyFire.integer & 1 && g_gametype.integer != GT_SURVIVAL ) {
+			hitEventType = HIT_TEAMSHOT;
+		}
+		else /*if ( !targ->client->ps.powerups[PW_OPS_DISGUISED] )*/ {
+			hitEventType = HIT_BODYSHOT;
+		}
+
+		//BG_UpdateConditionValue( targ->client->ps.clientNum, ANIM_COND_ENEMY_WEAPON, attacker->client->ps.weapon, qtrue );
+	}
+
 	// battlesuit protects from all radius damage (but takes knockback)
 	// and protects 50% against all damage
 	if ( client && client->ps.powerups[PW_BATTLESUIT] ) {
 		G_AddEvent( targ, EV_POWERUP_BATTLESUIT, 0 );
-		/*if ( dflags & DAMAGE_RADIUS ) {
-			return;
-		}*/
 
 		damage *= 0.30;
+	}
+
+	if ( client && client->ps.powerups[PW_BATTLESUIT_SURV] ) {
+		G_AddEvent( targ, EV_POWERUP_BATTLESUIT_SURV, 0 );
+
+		damage *= 0.05;
 	}
 
 	// always give half damage if hurting self
@@ -1174,6 +1295,11 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 
 	if ( IsHeadShot( targ, attacker, dir, point, mod ) ) {
 
+			// Upgrade the hit event to headshot if we have not yet classified it as a teamshot (covertops etc..)
+			if ( hitEventType != HIT_TEAMSHOT ) {
+				hitEventType = HIT_HEADSHOT;
+			}
+
 			// by default, a headshot means damage x2
 			take *= 2;
 
@@ -1231,6 +1357,8 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 							break;
 						}
 					case AICHAR_SOLDIER:
+					case AICHAR_MERCENARY:
+					case AICHAR_TRENCH:
 					case AICHAR_AMERICAN:
 					case AICHAR_ELITEGUARD:
 					case AICHAR_PARTISAN:
@@ -1259,6 +1387,8 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 			if ( ( mod == MOD_SNOOPERSCOPE || mod == MOD_GARAND ) && !( attacker->aiCharacter ) ) {
 				switch ( targ->aiCharacter ) {
 				case AICHAR_SOLDIER:
+				case AICHAR_MERCENARY:
+				case AICHAR_TRENCH:
 				case AICHAR_AMERICAN:
 				case AICHAR_ELITEGUARD:
 				case AICHAR_BLACKGUARD:
@@ -1274,6 +1404,23 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 		}
 	}
 
+	if ( targ->client && targ->client->ps.stats[STAT_HEALTH] > 0 ) {
+		if ( hitEventType ) {
+			if ( !hitEventOut ) {
+				G_AddEvent( attacker, EV_PLAYER_HIT, hitEventType );
+			} else {
+				*hitEventOut = hitEventType;
+			}
+		}
+
+		// hit marker
+		if ( targ->client->ps.stats[STAT_HEALTH] <= take ) {
+			hitEventType = HIT_DEATHSHOT;
+		}
+		if ( !attacker->aiCharacter ) {
+			trap_SendServerCommand( attacker - g_entities, va("hitMarker %d", hitEventType) );
+		}
+	}
 
 	if ( g_debugDamage.integer ) {
 		G_Printf( "client:%i health:%i damage:%i armor:%i\n", targ->s.number,
@@ -1293,7 +1440,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 		client->damage_blood += take;
 		client->damage_knockback += knockback;
 
-		client->healthRegenStartTime = level.time + 5000; // This will reset health regen timer
+		client->healthRegenStartTime = level.time + 2500; // This will reset health regen timer
 
 		if ( dir ) {
 			VectorCopy( dir, client->damage_from );
@@ -1318,13 +1465,15 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 		targ->health = targ->health - take;
 
 		// Ridah, can't gib with bullet weapons (except VENOM)
-		if ( targ->client ) {
-			if ( mod != MOD_VENOM && attacker == inflictor && targ->health <= GIB_HEALTH ) {
-				if ( targ->aiCharacter != AICHAR_ZOMBIE ) { // zombie needs to be able to gib so we can kill him (although he doesn't actually GIB, he just dies)
-					targ->health = GIB_HEALTH + 1;
-				}
-			}
-		}
+        if ( targ->client ) {
+            if ( mod != MOD_VENOM && attacker == inflictor && targ->health <= GIB_HEALTH ) {
+                if ( targ->aiCharacter != AICHAR_ZOMBIE ) { // zombie needs to be able to gib so we can kill him (although he doesn't actually GIB, he just dies)
+                    if (!(attacker && attacker->client && attacker->client->ps.powerups[PW_QUAD])) {
+                        targ->health = GIB_HEALTH + 1;
+                    }
+                }
+            }
+        }
 
 		//G_Printf("health at: %d\n", targ->health);
 		if ( targ->health <= 0 ) {
@@ -1352,6 +1501,8 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 			}
 
 		} else if ( targ->pain ) {
+			targ->lastPainMOD = mod; // set mod for AICast_Pain to access
+			
 			if ( dir ) {  // Ridah, had to add this to fix NULL dir crash
 				VectorCopy( dir, targ->rotate );
 				VectorCopy( point, targ->pos3 ); // this will pass loc of hit
@@ -1360,7 +1511,9 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker,
 				VectorClear( targ->pos3 );
 			}
 
-			targ->pain( targ, attacker, take, point );
+			targ->pain(targ, attacker, take, point);
+
+			targ->lastPainMOD = 0; // optional: reset after use
 		}
 
 		G_ArmorDamage( targ );    //----(SA)	moved out to separate routine
@@ -1575,16 +1728,27 @@ qboolean G_RadiusDamage( vec3_t origin, gentity_t *attacker, float damage, float
 		points = damage * ( 1.0 - dist / radius );
 
 // JPW NERVE -- different radiusdmg behavior for MP -- big explosions should do less damage (over less distance) through failed traces
-		if ( CanDamage( ent, origin ) ) {
-			if ( LogAccuracyHit( ent, attacker ) ) {
+		if (CanDamage(ent, origin))
+		{
+			if (LogAccuracyHit(ent, attacker))
+			{
 				hitClient = qtrue;
 			}
-			VectorSubtract( ent->r.currentOrigin, origin, dir );
-			// push the center of mass higher than the origin so players
-			// get knocked into the air more
+			VectorSubtract(ent->r.currentOrigin, origin, dir);
 			dir[2] += 24;
 
-			G_Damage( ent, NULL, attacker, dir, origin, (int)points, DAMAGE_RADIUS, mod );
+			int finalDamage = (int)points;
+
+			// Reduce self-damage in Survival mode only
+			if (ent == attacker && attacker->client)
+			{
+				if (mod == MOD_ROCKET_SPLASH && g_gametype.integer == GT_SURVIVAL)
+				{
+					finalDamage *= 0.3f;
+				}
+			}
+
+			G_Damage(ent, NULL, attacker, dir, origin, finalDamage, DAMAGE_RADIUS, mod);
 		}
 	}
 	return hitClient;
@@ -1671,11 +1835,16 @@ qboolean G_RadiusDamage2( vec3_t origin, gentity_t *inflictor, gentity_t *attack
 		        if (!ent->client) //&& ent->s.eType != ET_CORPSE )
                     continue;
                 break;
-
             case RADIUS_SCOPE_NOCLIENTS:
 		        if (ent->client)
                     continue;
                 break;
+            case RADIUS_SCOPE_AI:
+				if (!ent->aiCharacter)
+					continue; 
+				if (ent->health <= 0)
+					continue;
+				break;
 		}
 
 		if(	ent->waterlevel == 3 && mod == MOD_POISONGAS) {

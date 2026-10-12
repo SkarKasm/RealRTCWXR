@@ -42,6 +42,8 @@ localEntity_t cg_localEntities[MAX_LOCAL_ENTITIES];
 localEntity_t cg_activeLocalEntities;       // double linked list
 localEntity_t   *cg_freeLocalEntities;      // single linked list
 
+delayedBrass_t  *cg_delayedBrasses = NULL;
+
 // Ridah, debugging
 int localEntCount = 0;
 
@@ -128,6 +130,55 @@ localEntity_t   *CG_AllocLocalEntity( void ) {
 
 
 /*
+==================
+CG_FreeDelayedBrass
+==================
+*/
+void CG_FreeDelayedBrass( delayedBrass_t *b ) {
+	if ( !b ) {
+		CG_Error( "CG_FreeDelayedBrass: b is NULL" );
+		return;
+	}
+
+	// unlink from list (handle head correctly)
+	if ( b->prev ) {
+		b->prev->next = b->next;
+	} else {
+		// b was head
+		cg_delayedBrasses = b->next;
+	}
+
+	if ( b->next ) {
+		b->next->prev = b->prev;
+	}
+
+	free( b );
+}
+
+
+/*
+===================
+CG_AllocDelayedBrass
+===================
+*/
+void CG_AllocDelayedBrass( centity_t * cent, int time, void ( *ejectBrassFunc )( centity_t * ) ) {
+
+	delayedBrass_t *delayedBrasses = ( delayedBrass_t* )malloc( sizeof( delayedBrass_t ) );
+	memset( delayedBrasses, 0, sizeof( delayedBrass_t ) );
+	delayedBrasses->centity = cent;
+	delayedBrasses->time = time;
+	delayedBrasses->ejectBrassFunc = ejectBrassFunc;
+
+	if ( !cg_delayedBrasses ) {
+		cg_delayedBrasses = delayedBrasses;
+	} else {
+		delayedBrasses->next = cg_delayedBrasses;
+		cg_delayedBrasses->prev = delayedBrasses;
+		cg_delayedBrasses = delayedBrasses;
+	}
+}
+
+/*
 ====================================================================================
 
 FRAGMENT PROCESSING
@@ -172,9 +223,9 @@ void CG_BloodTrail( localEntity_t *le ) {
 	step = ( 1000 * 3 ) / VectorLength( le->pos.trDelta );
 #endif
 
-	if ( cent && cent->currentState.aiChar == AICHAR_ZOMBIE ) {
-		step = 30;
-	}
+  if ( cent && (cent->currentState.aiChar == AICHAR_ZOMBIE || cent->currentState.aiChar == AICHAR_ZOMBIE_SURV || cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME || cent->currentState.aiChar == AICHAR_ZOMBIE_GHOST) ) {
+    step = 30;
+  }
 
 	t = step * ( ( cg.time - cg.frametime + step ) / step );
 	t2 = step * ( cg.time / step );
@@ -187,7 +238,7 @@ void CG_BloodTrail( localEntity_t *le ) {
 #else
 
 
-		if ( cent && cent->currentState.aiChar == AICHAR_ZOMBIE ) {
+   if ( cent && (cent->currentState.aiChar == AICHAR_ZOMBIE || cent->currentState.aiChar == AICHAR_ZOMBIE_SURV || cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME || cent->currentState.aiChar == AICHAR_ZOMBIE_GHOST) ) {
 			CG_Particle_Bleed( cgs.media.smokePuffShader, newOrigin, vec3_origin, 1, 500 + rand() % 200 );
 		} else {
 			// Ridah, blood trail using trail code (should be faster since we don't have to spawn as many)
@@ -1657,6 +1708,98 @@ static void CG_AddSpriteExplosion( localEntity_t *le ) {
 	}
 }
 
+#define EMP_WAVE_LIFE   600     // ms
+#define EMP_WAVE_RADIUS 512.0f  // match gameplay radius
+
+#define EMP_WAVE_LIFE_MS   650
+#define EMP_WAVE_RADIUS    512.0f
+#define EMP_SPARKS         16
+
+void CG_SpawnEMPWave( centity_t *cent ) {
+    localEntity_t *le = CG_AllocLocalEntity();
+    le->leType = LE_EMP_WAVE;
+    le->startTime = cg.time;
+    le->endTime   = cg.time + EMP_WAVE_LIFE_MS;
+    VectorCopy( cent->lerpOrigin, le->pos.trBase );
+    le->radius = EMP_WAVE_RADIUS;
+
+    le->leFlags = (cg.time & 1023);
+}
+
+static void CG_AddEMPWave( localEntity_t *le ) {
+    float frac = (cg.time - le->startTime) / (float)(le->endTime - le->startTime);
+    if ( frac < 0.0f || frac > 1.0f ) return;
+
+    float r = le->radius * frac;
+    float alpha = 1.0f - frac;
+
+    vec3_t org;
+    VectorCopy(le->pos.trBase, org);
+
+    // --- RING QUAD ON GROUND (XY plane) ---
+    polyVert_t v[4];
+    vec3_t right = {1,0,0};
+    vec3_t up    = {0,1,0};
+
+    // corners
+    VectorMA(org, -r, right, v[0].xyz); VectorMA(v[0].xyz, -r, up, v[0].xyz);
+    VectorMA(org,  r, right, v[1].xyz); VectorMA(v[1].xyz, -r, up, v[1].xyz);
+    VectorMA(org,  r, right, v[2].xyz); VectorMA(v[2].xyz,  r, up, v[2].xyz);
+    VectorMA(org, -r, right, v[3].xyz); VectorMA(v[3].xyz,  r, up, v[3].xyz);
+
+    // lift to avoid z-fighting
+    for (int i=0;i<4;i++) v[i].xyz[2] += 2.0f;
+
+    // uv
+    v[0].st[0]=0; v[0].st[1]=0;
+    v[1].st[0]=1; v[1].st[1]=0;
+    v[2].st[0]=1; v[2].st[1]=1;
+    v[3].st[0]=0; v[3].st[1]=1;
+
+    // color (additive blue)
+    byte a = (byte)(alpha * 255.0f);
+    for (int i=0;i<4;i++) {
+        v[i].modulate[0] = 40;
+        v[i].modulate[1] = 90;
+        v[i].modulate[2] = 255;
+        v[i].modulate[3] = a;
+    }
+
+    trap_R_AddPolyToScene(cgs.media.empRingShader, 4, v);
+
+    // --- SPARK SPRITES AROUND CIRCUMFERENCE ---
+    // place EMP_SPARKS sprites on the ring edge, slightly above ground
+    for (int i=0; i<EMP_SPARKS; i++) {
+        float ang = ( (float)i / (float)EMP_SPARKS ) * (2.0f * M_PI);
+        // tiny wobble so it doesn't look too perfect
+        float wob = 0.12f * sinf( (cg.time * 0.02f) + i );
+        float rr = r * (1.0f + wob);
+
+        vec3_t p;
+        p[0] = org[0] + cosf(ang) * rr;
+        p[1] = org[1] + sinf(ang) * rr;
+        p[2] = org[2] + 10.0f;
+
+        refEntity_t re;
+        memset(&re, 0, sizeof(re));
+        re.reType = RT_SPRITE;
+        VectorCopy(p, re.origin);
+        re.customShader = cgs.media.empSparkShader;
+
+        // size grows a bit with the wave
+        re.radius = 6.0f + 18.0f * frac;
+
+        re.shaderRGBA[0] = 40;
+        re.shaderRGBA[1] = 90;
+        re.shaderRGBA[2] = 255;
+        re.shaderRGBA[3] = a;
+
+        trap_R_AddRefEntityToScene(&re);
+    }
+
+    // optional: add a blue dlight that expands/fades
+    trap_R_AddLightToScene(org, 200.0f + 250.0f * frac, 0.2f, 0.3f, 1.0f, 0);
+}
 
 //==============================================================================
 
@@ -1667,88 +1810,58 @@ CG_AddLocalEntities
 ===================
 */
 void CG_AddLocalEntities( void ) {
-	localEntity_t   *le, *next;
+    localEntity_t *le, *next;
+    delayedBrass_t *dlBrass, *nextDlBrass;
 
-	cg.viewFade = 0.0;
+    cg.viewFade = 0.0;
 
-	// walk the list backwards, so any new local entities generated
-	// (trails, marks, etc) will be present this frame
-	le = cg_activeLocalEntities.prev;
-	for ( ; le != &cg_activeLocalEntities ; le = next ) {
-		// grab next now, so if the local entity is freed we
-		// still have it
-		next = le->prev;
+    // Process delayed brass without breaking local entities rendering
+    for ( dlBrass = cg_delayedBrasses; dlBrass; dlBrass = nextDlBrass ) {
+        nextDlBrass = dlBrass->next;
 
-		if ( cg.time >= le->endTime ) {
-			CG_FreeLocalEntity( le );
-			continue;
-		}
-		switch ( le->leType ) {
-		default:
-			CG_Error( "Bad leType: %i", le->leType );
-			break;
+        if ( cg.time >= dlBrass->time ) {
+            if ( dlBrass->ejectBrassFunc && dlBrass->centity ) {
+                dlBrass->ejectBrassFunc( dlBrass->centity );
+            }
+            CG_FreeDelayedBrass( dlBrass );
+        }
+    }
 
-			// Ridah
-		case LE_MOVING_TRACER:
-			CG_AddMovingTracer( le );
-			break;
-		case LE_SPARK:
-			CG_AddSparkElements( le );
-			break;
-		case LE_FUSE_SPARK:
-			CG_AddFuseSparkElements( le );
-			break;
-		case LE_DEBRIS:
-			CG_AddDebrisElements( le );
-			break;
-		case LE_BLOOD:
-			CG_AddBloodElements( le );
-			break;
-		case LE_HELGA_SPIRIT:
-		case LE_ZOMBIE_SPIRIT:
-		case LE_ZOMBIE_BAT:
-			CG_AddClientCritter( le );
-			break;
-		case LE_SPIRIT_VIEWFLASH:
-			CG_AddSpiritViewflash( le );
-			// done.
+    // walk the list backwards, so any new local entities generated
+    // (trails, marks, etc) will be present this frame
+    le = cg_activeLocalEntities.prev;
+    for ( ; le != &cg_activeLocalEntities ; le = next ) {
+        next = le->prev;
 
-		case LE_MARK:
-			break;
+        if ( cg.time >= le->endTime ) {
+            CG_FreeLocalEntity( le );
+            continue;
+        }
 
-		case LE_SPRITE_EXPLOSION:
-			CG_AddSpriteExplosion( le );
-			break;
-
-		case LE_EXPLOSION:
-			CG_AddExplosion( le );
-			break;
-
-		case LE_FRAGMENT:           // gibs and brass
-			CG_AddFragment( le );
-			break;
-
-		case LE_MOVE_SCALE_FADE:        // water bubbles
-			CG_AddMoveScaleFade( le );
-			break;
-
-		case LE_FADE_RGB:               // teleporters, railtrails
-			CG_AddFadeRGB( le );
-			break;
-
-		case LE_FALL_SCALE_FADE: // gib blood trails
-			CG_AddFallScaleFade( le );
-			break;
-
-		case LE_SCALE_FADE:     // rocket trails
-			CG_AddScaleFade( le );
-			break;
-
-		case LE_EMITTER:
-			CG_AddEmitter( le );
-			break;
-
-		}
-	}
+        switch ( le->leType ) {
+        default:
+            CG_Error( "Bad leType: %i", le->leType );
+            break;
+        case LE_MOVING_TRACER:      CG_AddMovingTracer( le ); break;
+        case LE_SPARK:             CG_AddSparkElements( le ); break;
+        case LE_FUSE_SPARK:        CG_AddFuseSparkElements( le ); break;
+        case LE_DEBRIS:            CG_AddDebrisElements( le ); break;
+        case LE_BLOOD:             CG_AddBloodElements( le ); break;
+        case LE_HELGA_SPIRIT:
+        case LE_ZOMBIE_SPIRIT:
+        case LE_ZOMBIE_BAT:        CG_AddClientCritter( le ); break;
+        case LE_SPIRIT_VIEWFLASH:  CG_AddSpiritViewflash( le ); /* fallthrough */
+        case LE_MARK:              break;
+        case LE_SPRITE_EXPLOSION:  CG_AddSpriteExplosion( le ); break;
+        case LE_EXPLOSION:         CG_AddExplosion( le ); break;
+        case LE_FRAGMENT:          CG_AddFragment( le ); break;
+        case LE_MOVE_SCALE_FADE:   CG_AddMoveScaleFade( le ); break;
+        case LE_FADE_RGB:          CG_AddFadeRGB( le ); break;
+        case LE_FALL_SCALE_FADE:   CG_AddFallScaleFade( le ); break;
+        case LE_SCALE_FADE:        CG_AddScaleFade( le ); break;
+        case LE_EMITTER:           CG_AddEmitter( le ); break;
+		case LE_EMP_WAVE:          CG_AddEMPWave( le ); break;
+        }
+    }
 }
 

@@ -155,10 +155,19 @@ translateString_t translateStrings[] = {
 	{"months"},                  //
 	{"year"},                    //
 	{"years"},                   //
-	{"or"}           
+	{"or"},
+	{"item"},
+	{"weapon"},
+	{"price"},
+	{"ammo_price"},
+    {"survival_gameover"},
+	{"usedcross"},
+	{"usedemp"},
+	{"usedshield"}
 };
 
-bonusString_t bonusStrings[] = {
+// sized to MAX_BONUSSTRINGS so trailing slots are free for custom campaign keys to append into
+bonusString_t bonusStrings[MAX_BONUSSTRINGS] = {
 	{"bonus_escape1"},   
 	{"bonus_escape1_alt"},                   
 	{"bonus_escape2"},   
@@ -2560,7 +2569,7 @@ qboolean Item_TextField_HandleKey( itemDef_t *item, int key ) {
 			}
 		}
 
-		if ( key == K_TAB || key == K_DOWNARROW || key == K_KP_DOWNARROW || K_PAD0_DPAD_DOWN ) {
+		if ( key == K_TAB || key == K_DOWNARROW || key == K_KP_DOWNARROW || key == K_PAD0_DPAD_DOWN ) {
 			newItem = Menu_SetNextCursorItem( item->parent );
 			if ( newItem && ( newItem->type == ITEM_TYPE_EDITFIELD || newItem->type == ITEM_TYPE_NUMERICFIELD || newItem->type == ITEM_TYPE_VALIDFILEFIELD ) ) {
 				g_editItem = newItem;
@@ -2575,14 +2584,14 @@ qboolean Item_TextField_HandleKey( itemDef_t *item, int key ) {
 		}
 
 		// NERVE - SMF
-		if ( key == K_ENTER || key == K_KP_ENTER || key == K_PAD0_A  ) {
+		if ( key == K_ENTER || key == K_KP_ENTER ) {
 			if ( item->onAccept ) {
 				Item_RunScript( item, item->onAccept );
 			}
 		}
 		// -NERVE - SMF
 
-		if ( key == K_ENTER || key == K_KP_ENTER || key == K_ESCAPE || key == K_PAD0_A  ) {
+		if ( key == K_ENTER || key == K_KP_ENTER || key == K_ESCAPE ) {
 			return qfalse;
 		}
 
@@ -3148,6 +3157,21 @@ void Menu_HandleKey( menuDef_t *menu, int key, qboolean down ) {
 			DC->executeText( EXEC_APPEND, "screenshot\n" );
 		}
 		break;
+
+	case K_PAD0_LEFTSHOULDER:
+		if ( !Q_stricmp( menu->window.name, "ingame" ) ) {
+			DC->executeText( EXEC_APPEND, "togglemenu\n" );
+			DC->executeText( EXEC_APPEND, "loadgame quicksave\n" );
+		}
+		break;
+
+	case K_PAD0_RIGHTSHOULDER:
+		if ( !Q_stricmp( menu->window.name, "ingame" ) ) {
+			DC->executeText( EXEC_APPEND, "togglemenu\n" );
+			DC->executeText( EXEC_APPEND, "savegame quicksave\n" );
+		}
+		break;
+
 	case K_KP_UPARROW:
 	case K_UPARROW:
     case K_PAD0_DPAD_UP:
@@ -3729,9 +3753,10 @@ static bind_t g_bindings[] =
 	{"zoomout",          -1,             -1, -1, -1},
 	{"+kick",            -1,             -1, -1, -1},
 	{"+quickgren",       -1,             -1, -1, -1},
+	{"+weaponwheel",      K_TAB,         -1, -1, -1},
 	{"+reload",      -1,             -1, -1, -1},
 	{"+sprint",      -1,             -1, -1, -1},
-	{"notebook",     K_TAB,          -1, -1, -1},
+	{"notebook",    -1,          -1, -1, -1},
 //	{"help",			K_F1,           -1, -1, -1},
 	{"+leanleft",        -1,             -1, -1, -1},
 	{"+leanright",       -1,             -1, -1, -1},
@@ -3917,6 +3942,10 @@ void Item_Slider_Paint( itemDef_t *item ) {
 	}
 	DC->setColor( newColor );
 	DC->drawHandlePic( x, y, SLIDER_WIDTH, SLIDER_HEIGHT, DC->Assets.sliderBar );
+
+	if ( item->cvar ) {
+		DC->drawText( x + SLIDER_WIDTH + 8, item->textRect.y, item->font, item->textscale, newColor, va( "%.2f", DC->getCVarValue( item->cvar ) ), 0, 0, item->textStyle );
+	}
 
 	x = Item_Slider_ThumbPosition( item );
 	DC->drawHandlePic( x - ( SLIDER_THUMB_WIDTH / 2 ), y - 2, SLIDER_THUMB_WIDTH, SLIDER_THUMB_HEIGHT, DC->Assets.sliderThumb );
@@ -4218,6 +4247,7 @@ void Item_ListBox_Paint( itemDef_t *item ) {
 	// textscale is used to size the text, textalignx and textaligny are used to size image elements
 	// there is no clipping available so only the last completely visible item is painted
 	count = DC->feederCount( item->special );
+
 	// default is vertical if horizontal flag is not here
 	if ( item->window.flags & WINDOW_HORIZONTAL ) {
 		// draw scrollbar in bottom of the window
@@ -5905,43 +5935,44 @@ void Item_SetupKeywordHash( void ) {
 typedef struct vidmode_s
 {
 	const char *description;
+	int width, height;
 	int mode;
 } vidmode_t;
 
 vidmode_t r_vidModes[] =
 {
-	{ "320x240 (4:3)",          0 },
-	{ "400x300 (4:3)",          1 },
-	{ "512x384 (4:3)",          2 },
-	{ "640x480 (4:3)",          3 },
-	{ "800x600 (4:3)",          4 },
-	{ "960x720 (4:3)",          5 },
-	{ "1024x768 (4:3)",         6 },
-	{ "1152x864 (4:3)",         7 },
-	{ "1280x1024 (5:4)",        8 },
-	{ "1600x1200 (4:3)",        9 },
-	{ "2048x1536 (4:3)",       10 },
-	{ "856x480 (16:9)",        11 },
-	{ "640x360 (16:9)",        12 },
-	{ "640x400 (16:10)",       13 },
-	{ "800x450 (16:9)",        14 },
-	{ "800x500 (16:10)",       15 },
-	{ "1024x640 (16:10)",      16 },
-	{ "1024x576 (16:9)",       17 },
-	{ "1280x720 (16:9)",       18 },
-	{ "1280x768 (16:10)",      19 },
-	{ "1280x800 (16:10)",      20 },
-	{ "1280x960 (4:3)",        21 },
-	{ "1440x900 (16:10)",      22 },
-	{ "1600x900 (16:9)",       23 },
-	{ "1600x1000 (16:10)",     24 },
-	{ "1680x1050 (16:10)",     25 },
-	{ "1920x1080 (16:9)",      26 },
-	{ "1920x1200 (16:10)",     27 },
-	{ "1920x1440 (4:3)",       28 },
-	{ "2560x1600 (16:10)",     29 },
-	{ "Automatic (Native)",    -2 },
-	{ "Custom",                -1 }
+    { "320x240 (4:3)",		320,	240,		0 },
+    { "400x300 (4:3)",		400,	300,		1 },
+    { "512x384 (4:3)",		512,	384,		2 },
+    { "640x480 (4:3)",		640,	480,		3 },
+    { "800x600 (4:3)",		800,	600,		4 },
+    { "960x720 (4:3)",		960,	720,		5 },
+    { "1024x768 (4:3)",		1024,	768,		6 },
+    { "1152x864 (4:3)",		1152,	864,		7 },
+    { "1280x1024 (5:4)",	1280,	1024,		8 },
+    { "1600x1200 (4:3)",	1600,	1200,		9 },
+    { "2048x1536 (4:3)",	2048,	1536,		10 },
+	{ "856x480 (16:9)",		856,	480,		11 },
+	{ "640x360 (16:9)",		640,	360,		12 },
+	{ "640x400 (16:10)",	640,	400,		13 },
+	{ "800x450 (16:9)",		800,	450,		14 },
+	{ "800x500 (16:10)",	800,	500,		15 },
+	{ "1024x640 (16:10)",	1024,	640,		16 },
+	{ "1024x576 (16:9)",	1024,	576,		17 },
+	{ "1280x720 (16:9)",	1280,	720,		18 },
+	{ "1280x768 (16:10)",	1280,	768,		19 },
+	{ "1280x800 (16:10)",	1280,	800,		20 },
+	{ "1280x960 (4:3)",		1280,	960,		21 },
+	{ "1440x900 (16:10)",	1440,	900,		22 },
+	{ "1600x900 (16:9)",	1600,	900,		23 },
+	{ "1600x1000 (16:10)",	1600,	1000,		24 },
+	{ "1680x1050 (16:10)",	1680,	1050,		25 },
+	{ "1920x1080 (16:9)",	1920,	1080,		26 },
+	{ "1920x1200 (16:10)",	1920,	1200,		27 },
+	{ "1920x1440 (4:3)",	1920,	1440,		28 },
+	{ "2560x1600 (16:10)",	2560,	1600,		29 },
+    { "Automatic (Native)",	0,		0,			-2 },
+    { "Custom",				0,		0,			-1 }
 };
 static int	s_numVidModes = ARRAY_LEN( r_vidModes );
 
@@ -5958,14 +5989,18 @@ static void Item_ApplyHacks( itemDef_t *item ) {
 	if ( item->type == ITEM_TYPE_MULTI && item->cvar && !Q_stricmp( item->cvar, "r_mode" ) ) {
 		int i;
 		multiDef_t *multiPtr = (multiDef_t*)item->typeData;;
+		int maxWidth = (int)DC->getCVarValue("r_maxResolutionWidth");
+		int maxHeight = (int)DC->getCVarValue("r_maxResolutionHeight");
 
 		DC->DPrint( "Found modelist with %d modes, extending list to %d modes\n", multiPtr->count, s_numVidModes );
 
 		multiPtr->count = 0;
 		for ( i = 0; i < s_numVidModes; i++ ) {
-			multiPtr->cvarList[multiPtr->count] = String_Alloc( r_vidModes[i].description );
-			multiPtr->cvarValue[multiPtr->count] = r_vidModes[i].mode;
-			multiPtr->count++;
+			if ( (r_vidModes[i].width <= maxWidth && r_vidModes[i].height <= maxHeight ) || r_vidModes[i].mode < 0 ) {
+				multiPtr->cvarList[multiPtr->count] = String_Alloc( r_vidModes[i].description );
+				multiPtr->cvarValue[multiPtr->count] = r_vidModes[i].mode;
+				multiPtr->count++;
+			}
 
 			if ( multiPtr->count >= MAX_MULTI_CVARS ) {
 				break;

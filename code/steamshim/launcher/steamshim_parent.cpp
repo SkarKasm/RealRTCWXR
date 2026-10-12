@@ -215,6 +215,7 @@ static bool setEnvVar(const char *key, const char *val)
     return (SetEnvironmentVariableA(key, val) != 0);
 } // setEnvVar
 
+/*
 static bool launchChild(ProcessType *pid)
 {
     TCHAR name[MAX_PATH] = _T(GAME_LAUNCH_NAME);
@@ -225,6 +226,42 @@ static bool launchChild(ProcessType *pid)
 
     return (CreateProcessW(name, NULL, NULL, NULL, true, 
         0, NULL, NULL, &cif, pid) != 0);
+} // launchChild
+*/
+
+// pass args from steam to game for windows
+static bool launchChild(ProcessType* pid)
+{
+    TCHAR gamePath[MAX_PATH] = _T(GAME_LAUNCH_NAME);
+    _tprintf(_T("%ls\n"), gamePath);
+
+    LPTSTR originalCmdLine = GetCommandLine();
+    TCHAR finalCmdLine[4096] = {0};
+
+    _tcscpy(finalCmdLine, _T("\""));
+    _tcscat(finalCmdLine, gamePath);
+    _tcscat(finalCmdLine, _T("\""));
+
+    LPTSTR args = NULL;
+    if (originalCmdLine[0] == _T('\"')) {
+        args = _tcschr(originalCmdLine + 1, _T('\"'));
+        if (args != NULL) {
+            args = _tcschr(args + 1, _T(' '));
+        }
+    } else {
+        args = _tcschr(originalCmdLine, _T(' '));
+    }
+
+    if (args != NULL) {
+        _tcscat(finalCmdLine, args);
+    }
+
+    _tprintf(_T("Command line: %ls\n"), finalCmdLine);
+
+    STARTUPINFOW cif = {0};
+    cif.cb = sizeof(STARTUPINFO);
+
+    return CreateProcessW(NULL, finalCmdLine, NULL, NULL, TRUE, 0, NULL, NULL, &cif, pid);
 } // launchChild
 
 static int closeProcess(ProcessType *pid)
@@ -597,9 +634,10 @@ static bool processCommand(const uint8 *buf, unsigned int buflen, PipeType fd)
             return false;
 
         case SHIMCMD_REQUESTSTATS:
-            if ((!GSteamStats) || (!GSteamStats->RequestCurrentStats()))
-                writeStatsReceived(fd, false);
-            // callback later.
+            // Steamworks SDK 1.61 removed ISteamUserStats::RequestCurrentStats().
+            // Stats and achievements are now synchronized by the Steam client before launch.
+            // Keep the shim command for compatibility with existing game code.
+            writeStatsReceived(fd, GSteamStats != NULL);
             break;
 
         case SHIMCMD_STORESTATS:

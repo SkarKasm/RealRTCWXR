@@ -92,6 +92,9 @@ cvar_t  *cl_forceavidemo;
 cvar_t  *cl_freelook;
 cvar_t  *cl_sensitivity;
 
+cvar_t  *cl_zoomSensitivity;
+cvar_t  *cl_zoomSensitivityFovScaled;
+
 cvar_t  *cl_mouseAccel;
 cvar_t	*cl_mouseAccelOffset;
 cvar_t	*cl_mouseAccelStyle;
@@ -114,6 +117,32 @@ cvar_t	*j_forward_axis;
 cvar_t	*j_side_axis;
 cvar_t	*j_up_axis;
 
+cvar_t  *j_lookSens;
+cvar_t  *j_moveSens;
+
+cvar_t  *j_walk_threshold;
+cvar_t  *j_walk_hysteresis;
+
+cvar_t  *j_aimassist;            
+cvar_t  *j_aimassist_slowdown;   
+cvar_t  *j_aimassist_magnet;    
+cvar_t  *j_aimassist_minstick;   
+cvar_t  *j_aimassist_maxangle;
+
+cvar_t *j_aimassist_strafemagnet;   
+cvar_t *j_aimassist_minstrength;    
+
+cvar_t *j_aimassist_turnrate;        
+cvar_t *j_aimassist_turnrate_ads;
+
+cvar_t *j_aimassist_recoil;
+
+cvar_t *j_uiSpeed;
+cvar_t *j_uiExpo;
+cvar_t *j_uiDeadzone;
+
+cvar_t *j_invertLook;
+
 cvar_t  *cl_activeAction;
 
 cvar_t  *cl_motdString;
@@ -135,8 +164,12 @@ cvar_t	*cl_lanForcePackets;
 cvar_t	*cl_guidServerUniq;
 
 cvar_t	*cl_consoleKeys;
+cvar_t  *cl_weaponWheelActive;
+cvar_t  *cl_useKeyLean;
 
 cvar_t	*cl_rate;
+
+cvar_t	*cl_drawCineSubtitles;
 
 clientActive_t cl;
 clientConnection_t clc;
@@ -174,7 +207,6 @@ void CL_CheckForResend( void );
 void CL_ShowIP_f( void );
 void CL_ServerStatus_f( void );
 void CL_ServerStatusResponse( netadr_t from, msg_t *msg );
-
 
 /*
 ==============
@@ -1347,6 +1379,8 @@ void CL_ClearState( void ) {
 	S_StopAllSounds();
 
 	memset( &cl, 0, sizeof( cl ) );
+	cl.timeDilation = 1.0f;
+	cl.timeDilationCarry = 0.0f;
 }
 
 /*
@@ -1686,6 +1720,7 @@ void CL_Disconnect_f( void ) {
 	// RF, make sure loading variables are turned off
 	Cvar_Set( "savegame_loading", "0" );
 	Cvar_Set( "g_reloading", "0" );
+	Cvar_Set( "g_level_was_selected", "0" );
 	if ( clc.state != CA_DISCONNECTED && clc.state != CA_CINEMATIC ) {
 		Com_Error( ERR_DISCONNECT, "Disconnected from server" );
 	}
@@ -3042,11 +3077,15 @@ void CL_Frame( int msec ) {
 	// send intentions now
 	CL_SendCmd();
 
+	CL_GamepadUIMouseMove();
+
 	// resend a connection request if necessary
 	CL_CheckForResend();
 
 	// decide on the serverTime to render
 	CL_SetCGameTime();
+
+	SCR_RunLevelCinematic();
 
 	// update the screen
 	SCR_UpdateScreen();
@@ -3287,10 +3326,11 @@ void CL_InitRenderer( void ) {
 
 	// load character sets
 	cls.charSetShader = re.RegisterShader( "gfx/2d/bigchars" );
+	cls.subtitleCharSetShader = re.RegisterShader( "gfx/2d/subchars" );
 	cls.whiteShader = re.RegisterShader( "white" );
 	cls.consoleShader = re.RegisterShader( "console" );
 	cls.consoleShader2 = re.RegisterShader( "console2" );
-	g_console_field_width = cls.glconfig.vidWidth / SMALLCHAR_WIDTH - 2;
+	g_console_field_width = cls.glconfig.vidWidth / g_smallchar_width - 2;
 	g_consoleField.widthInChars = g_console_field_width;
 }
 
@@ -3400,7 +3440,7 @@ void CL_InitRef( void ) {
 		Com_Error(ERR_FATAL, "Failed to load renderer");
 	}
 
-	GetRefAPI = Sys_LoadFunction(rendererLib, "GetRefAPI");
+	GetRefAPI = (GetRefAPI_t) Sys_LoadFunction(rendererLib, "GetRefAPI");
 	if(!GetRefAPI)
 	{
 		Com_Error(ERR_FATAL, "Can't load symbol GetRefAPI: '%s'",  Sys_LibraryError());
@@ -3719,6 +3759,9 @@ void CL_Init( void ) {
 	cl_mouseAccel = Cvar_Get( "cl_mouseAccel", "0", CVAR_ARCHIVE );
 	cl_freelook = Cvar_Get( "cl_freelook", "1", CVAR_ARCHIVE );
 
+	cl_zoomSensitivity = Cvar_Get( "cl_zoomSensitivity", "1", CVAR_ARCHIVE );
+	cl_zoomSensitivityFovScaled = Cvar_Get( "cl_zoomSensitivityFovScaled", "1", CVAR_ARCHIVE );
+
 	// 0: legacy mouse acceleration
 	// 1: new implementation
 	cl_mouseAccelStyle = Cvar_Get( "cl_mouseAccelStyle", "0", CVAR_ARCHIVE );
@@ -3758,17 +3801,44 @@ void CL_Init( void ) {
 	m_side = Cvar_Get( "m_side", "0.25", CVAR_ARCHIVE );
 	m_filter = Cvar_Get( "m_filter", "0", CVAR_ARCHIVE );
 
-	j_pitch =        Cvar_Get ("j_pitch",        "0.022", CVAR_ARCHIVE);
-	j_yaw =          Cvar_Get ("j_yaw",          "-0.022", CVAR_ARCHIVE);
-	j_forward =      Cvar_Get ("j_forward",      "-0.25", CVAR_ARCHIVE);
-	j_side =         Cvar_Get ("j_side",         "0.25", CVAR_ARCHIVE);
-	j_up =           Cvar_Get ("j_up",           "0", CVAR_ARCHIVE);
+	j_pitch =        Cvar_Get ("j_pitch",        "200", CVAR_ARCHIVE);
+	j_yaw =          Cvar_Get ("j_yaw",          "-200", CVAR_ARCHIVE);
+	j_forward =      Cvar_Get ("j_forward",      "-127", CVAR_ARCHIVE);
+	j_side =         Cvar_Get ("j_side",         "127", CVAR_ARCHIVE);
+	j_up =           Cvar_Get ("j_up",           "127", CVAR_ARCHIVE);
 
 	j_pitch_axis =   Cvar_Get ("j_pitch_axis",   "3", CVAR_ARCHIVE);
 	j_yaw_axis =     Cvar_Get ("j_yaw_axis",     "2", CVAR_ARCHIVE);
 	j_forward_axis = Cvar_Get ("j_forward_axis", "1", CVAR_ARCHIVE);
 	j_side_axis =    Cvar_Get ("j_side_axis",    "0", CVAR_ARCHIVE);
 	j_up_axis =      Cvar_Get ("j_up_axis",      "4", CVAR_ARCHIVE);
+
+	j_uiSpeed =     Cvar_Get ("j_uiSpeed",      "700", CVAR_ARCHIVE);
+	j_uiExpo =	    Cvar_Get ("j_uiExpo",      "1.6", CVAR_ARCHIVE);
+	j_uiDeadzone =	Cvar_Get ("j_uiDeadzone",   "0.18", CVAR_ARCHIVE);
+
+	j_invertLook = Cvar_Get( "j_invertLook", "0", CVAR_ARCHIVE );
+
+	j_lookSens = Cvar_Get ("j_lookSens", "1.0", CVAR_ARCHIVE);
+	j_moveSens = Cvar_Get ("j_moveSens", "1.0", CVAR_ARCHIVE);
+
+	j_walk_threshold = Cvar_Get("j_walk_threshold", "64", CVAR_ARCHIVE);
+	j_walk_hysteresis = Cvar_Get("j_walk_hysteresis", "8", CVAR_ARCHIVE);
+
+	j_aimassist = Cvar_Get("j_aimassist", "2", CVAR_ARCHIVE);
+
+	j_aimassist_slowdown = Cvar_Get("j_aimassist_slowdown", "0.60", CVAR_ARCHIVE);
+	j_aimassist_magnet = Cvar_Get("j_aimassist_magnet", "0.42", CVAR_ARCHIVE);
+	j_aimassist_minstick = Cvar_Get("j_aimassist_minstick", "0.10", CVAR_ARCHIVE);
+	j_aimassist_maxangle = Cvar_Get("j_aimassist_maxangle", "6", CVAR_ARCHIVE); // mostly legacy now
+
+	j_aimassist_strafemagnet = Cvar_Get("j_aimassist_strafemagnet", "0.24", CVAR_ARCHIVE);
+	j_aimassist_minstrength = Cvar_Get("j_aimassist_minstrength", "0.40", CVAR_ARCHIVE);
+
+	j_aimassist_turnrate = Cvar_Get("j_aimassist_turnrate", "175", CVAR_ARCHIVE); // deg/sec
+	j_aimassist_turnrate_ads = Cvar_Get("j_aimassist_turnrate_ads", "125", CVAR_ARCHIVE);
+
+	j_aimassist_recoil = Cvar_Get("j_aimassist_recoil", "0.22", CVAR_ARCHIVE);
 
 	Cvar_CheckRange(j_pitch_axis, 0, MAX_JOYSTICK_AXIS-1, qtrue);
 	Cvar_CheckRange(j_yaw_axis, 0, MAX_JOYSTICK_AXIS-1, qtrue);
@@ -3786,6 +3856,10 @@ void CL_Init( void ) {
 
 	// ~ and `, as keys and characters
 	cl_consoleKeys = Cvar_Get( "cl_consoleKeys", "~ ` 0x7e 0x60", CVAR_ARCHIVE);
+
+	cl_weaponWheelActive = Cvar_Get( "cg_weaponWheelActive", "0", 0 );
+
+	cl_useKeyLean = Cvar_Get( "cl_useKeyLean", "1", CVAR_ARCHIVE );
 
 	// userinfo
 	Cvar_Get( "name", "WolfPlayer", CVAR_USERINFO | CVAR_ARCHIVE );
@@ -3836,6 +3910,7 @@ void CL_Init( void ) {
 	// NERVE - SMF - localization
 	cl_language = Cvar_Get( "cl_language", "0", CVAR_ARCHIVE );
 	cl_debugTranslation = Cvar_Get( "cl_debugTranslation", "0", 0 );
+	cl_drawCineSubtitles = Cvar_Get( "cl_drawCineSubtitles", "0", CVAR_ARCHIVE );
 	// -NERVE - SMF
 
 	//

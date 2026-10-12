@@ -196,7 +196,6 @@ void CG_LoseArmor( centity_t *cent, int index ) {
 							"tag_calfleft",
 							"tag_calfright"};
 
-	clientInfo_t *ci;
 	// TTimo: bunch of inits
 	int totalparts = 0, dynamicparts = 0, protoParts = 9, superParts = 16, heinrichParts = 22;
 	char        **tags = NULL;
@@ -204,7 +203,6 @@ void CG_LoseArmor( centity_t *cent, int index ) {
 	qhandle_t sound = 0;    //----(SA)	added
 	int dmgbits = 16;         // 32/2;
 	int clientNum;
-	int tagIndex;
 	vec3_t origin, velocity, dir;
 
 
@@ -225,7 +223,7 @@ void CG_LoseArmor( centity_t *cent, int index ) {
 		dynamicparts = 14;  // the other two stay permanent
 		totalparts = superParts;
 		sound = cgs.media.superArmorBreak;
-	} else if ( cent->currentState.aiChar == AICHAR_HEINRICH ) {
+	}  else if ( cent->currentState.aiChar == AICHAR_HEINRICH ) {
 		tags = &heinrichTags[0];
 		models = &cgs.media.heinrichArmor[0];
 		dynamicparts = 20;  // will get kicked down to 16
@@ -247,7 +245,6 @@ void CG_LoseArmor( centity_t *cent, int index ) {
 	if ( clientNum < 0 || clientNum >= MAX_CLIENTS ) {
 		CG_Error( "Bad clientNum on player entity" );
 	}
-	ci = &cgs.clientinfo[ clientNum ];
 
 	// check if the model for the damaged part to fling is there
 	if ( cent->currentState.dmgFlags & ( 1 << ( index + dynamicparts ) ) ) {
@@ -258,7 +255,7 @@ void CG_LoseArmor( centity_t *cent, int index ) {
 		return;
 	}
 
-	tagIndex = CG_GetOriginForTag( cent, &cent->pe.torsoRefEnt, tags[index], 0, origin, NULL );
+	CG_GetOriginForTag( cent, &cent->pe.torsoRefEnt, tags[index], 0, origin, NULL );
 
 	// calculate direction vector based on player center->tag position
 	VectorSubtract( origin, cent->currentState.origin, dir );
@@ -709,10 +706,10 @@ void CG_DrawHoldableSelect( void ) {
 	cg.itemPickupTime = 0;
 
 	// count the number of holdables owned
-	bits = cg.snap->ps.stats[ STAT_HOLDABLE_ITEM ];
+	bits = cg.snap->ps.stats[STAT_HOLDABLE_ITEM];
 	count = 0;
 
-	for ( i = 1 ; i <= HI_LP_SYRINGE; i++ ) {
+	for ( i = 1 ; i < HI_HUD_VISIBLE_END; i++ ) {
 		if ( bits & ( 1 << i ) ) {
 			if ( cg.predictedPlayerState.holdable[i] ) {	// don't show ones we're out of
 				count++;
@@ -728,7 +725,7 @@ void CG_DrawHoldableSelect( void ) {
 	y = 370;
 
 
-	for ( i = 1 ; i <= HI_LP_SYRINGE ; i++ ) {
+	for ( i = 1 ; i < HI_HUD_VISIBLE_END ; i++ ) {
 		if ( !( bits & ( 1 << i ) ) ) {
 			continue;
 		}
@@ -1221,7 +1218,7 @@ static void CG_Missile( centity_t *cent ) {
 	// calculate the axis
 	VectorCopy( s1->angles, cent->lerpAngles );
 
-	if (s1->weapon == WP_POISONGAS)
+	if (s1->weapon == WP_POISONGAS || s1->weapon == WP_SMOKE_BOMB )
 	{
 		// the smoke effect
 		CG_RenderSmokeGrenadeSmoke( cent, weapon, (weapon_t)s1->weapon );
@@ -1253,7 +1250,7 @@ static void CG_Missile( centity_t *cent ) {
 		CG_S_AddLoopingSound( cent->currentState.number, cent->lerpOrigin, velocity, weapon->missileSound, 255 );
 	}
 
-		if ( cent->currentState.weapon == WP_DYNAMITE ) {
+		if ( cent->currentState.weapon == WP_DYNAMITE || cent->currentState.weapon == WP_DYNAMITE_ENG ) {
 			vec3_t velocity;
 			BG_EvaluateTrajectoryDelta( &cent->currentState.pos, cg.time, velocity, qfalse, -1 );
 			CG_S_AddLoopingSound( cent->currentState.number, cent->lerpOrigin, velocity, weapon->spindownSound, 255 );
@@ -1269,7 +1266,7 @@ static void CG_Missile( centity_t *cent ) {
 					int volume = flytime > 375 ? 255 : ( 75.f / ( (float)flytime - 300.f ) ) * 255;
 
 		    BG_EvaluateTrajectoryDelta( &cent->currentState.pos, cg.time, velocity, qfalse, -1 );
-		    CG_S_AddLoopingSound( cent->currentState.number, cent->lerpOrigin, velocity, weapon->missileSound, 0 );
+		    CG_S_AddLoopingSound( cent->currentState.number, cent->lerpOrigin, velocity, weapon->missileSound, volume );
 				}
 			}
 			}
@@ -1583,7 +1580,7 @@ static void CG_Corona( centity_t *cent ) {
 		if ( tr.fraction == 1 ) {
 			flags = 1;
 		}
-        if ( cgs.gametype == GT_GOTHIC ) { // red coronas
+        if ( cg_gothic.integer ) { // red coronas
 		trap_R_AddCoronaToScene( cent->lerpOrigin, (float)r / 255.0f, (float)g / 0.0f, (float)b / 0.0f, (float)cent->currentState.density / 255.0f, cent->currentState.number, flags );
 		} else {
 		trap_R_AddCoronaToScene( cent->lerpOrigin, (float)r / 255.0f, (float)g / 255.0f, (float)b / 255.0f, (float)cent->currentState.density / 255.0f, cent->currentState.number, flags );
@@ -1648,23 +1645,27 @@ static void CG_Efx( centity_t *cent ) {
 			}
 		}
 
-		for ( i = 0; i < MAX_TESLA_BOLTS; i++ ) {
+		for (i = 0; i < MAX_TESLA_BOLTS; i++)
+		{
 
-			if ( cent->boltCrawlDirs[0] || cent->boltCrawlDirs[1] || cent->boltCrawlDirs[2] ) {
-				VectorMA( cent->boltLocs[i], cent->boltTimes[i] - cg.time, cent->boltCrawlDirs[i], perpvec );
-			} else {
-				VectorCopy( cent->boltLocs[i], perpvec );
+			if (cent->boltCrawlDirs[i][0] || cent->boltCrawlDirs[i][1] || cent->boltCrawlDirs[i][2])
+			{
+				VectorMA(cent->boltLocs[i], cent->boltTimes[i] - cg.time, cent->boltCrawlDirs[i], perpvec);
+			}
+			else
+			{
+				VectorCopy(cent->boltLocs[i], perpvec);
 			}
 
-			CG_DynamicLightningBolt(    cgs.media.lightningBoltShader,  // shader
-										cent->currentState.origin,      // start
-										perpvec,                // end
-										cent->currentState.density,     // numBolts
-										cent->currentState.frame,       // maxWidth
-										qtrue,      // fade
-										1.0,        // startAlpha
-										0,          // recursion
-										i * i * 2 );     // randseed
+			CG_DynamicLightningBolt(cgs.media.lightningBoltShader, // shader
+									cent->currentState.origin,	   // start
+									perpvec,					   // end
+									cent->currentState.density,	   // numBolts
+									cent->currentState.frame,	   // maxWidth
+									qtrue,						   // fade
+									1.0,						   // startAlpha
+									0,							   // recursion
+									i * i * 2);					   // randseed
 		}
 
 		// add dlight
@@ -2294,7 +2295,14 @@ void CG_FlamethrowerProp( centity_t *cent ) {
 	int flags;
 
 	old = cent->currentState.aiChar;
-	cent->currentState.aiChar = AICHAR_ZOMBIE;
+    // Add condition for AICHAR_ZOMBIE_SURV
+    if (cent->currentState.aiChar == AICHAR_ZOMBIE_SURV) {
+        cent->currentState.aiChar = AICHAR_ZOMBIE_SURV;
+    } else if (cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME) {
+        cent->currentState.aiChar = AICHAR_ZOMBIE_FLAME; 
+    } else {
+		cent->currentState.aiChar = AICHAR_ZOMBIE;
+	}
 
 	if ( !( cent->currentState.eFlags & EF_FIRING ) ) {
 		return;

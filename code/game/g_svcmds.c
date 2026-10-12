@@ -500,6 +500,15 @@ qboolean    ConsoleCommand( void ) {
 		}
 
 		
+		if ( g_gametype.integer == GT_SURVIVAL) {
+
+		      trap_SendServerCommand( -1, "mu_play sound/items/use_nothing.wav 0\n" );
+		      trap_SendServerCommand( -1, "cp ironchallengesave" );  // no save 4 u
+              return qtrue;
+		}
+
+
+		
 
 		trap_Argv( 1, cmd, sizeof( cmd ) );
 		if ( strlen( cmd ) > 0 ) {
@@ -507,7 +516,7 @@ qboolean    ConsoleCommand( void ) {
 			if ( strrchr( cmd, '.' ) ) {
 				cmd[strrchr( cmd,'.' ) - cmd] = '\0';
 			}
-			if ( !Q_stricmp( cmd, "current" ) ) {     // beginning of map
+			if ( !Q_stricmp( cmd, "current_realrtcw" ) ) {     // beginning of map
 				Com_Printf( "sorry, '%s' is a reserved savegame name.  please use another name.\n", cmd );
 				return qtrue;
 			}

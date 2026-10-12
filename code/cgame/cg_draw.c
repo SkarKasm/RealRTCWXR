@@ -284,7 +284,7 @@ static void CG_DrawField( int x, int y, int width, int value ) {
 	if ( l > width ) {
 		l = width;
 	}
-	x += 2 + CHAR_WIDTH * ( width - l );
+	x += 2 + CHAR_WIDTH_CG * ( width - l );
 
 	ptr = num;
 	while ( *ptr && l )
@@ -295,8 +295,8 @@ static void CG_DrawField( int x, int y, int width, int value ) {
 			frame = *ptr - '0';
 		}
 
-		CG_DrawPic( x,y, CHAR_WIDTH, CHAR_HEIGHT, cgs.media.numberShaders[frame] );
-		x += CHAR_WIDTH;
+		CG_DrawPic( x,y, CHAR_WIDTH_CG, CHAR_HEIGHT_CG, cgs.media.numberShaders[frame] );
+		x += CHAR_WIDTH_CG;
 		ptr++;
 		l--;
 	}
@@ -685,15 +685,15 @@ static void CG_DrawStatusBar( void ) {
 
 	
 	if ( cg_drawStatusHead.integer ) {
-		CG_DrawStatusBarHead( 185 + CHAR_WIDTH*3 + TEXT_ICON_SPACE );
+		CG_DrawStatusBarHead( 185 + CHAR_WIDTH_CG*3 + TEXT_ICON_SPACE );
 	}
 
 	CG_DrawStatusBarKeys();
 
 	if ( cg.predictedPlayerState.powerups[PW_REDFLAG] ) {
-		CG_DrawStatusBarFlag( 185 + CHAR_WIDTH * 3 + TEXT_ICON_SPACE + ICON_SIZE, TEAM_RED );
+		CG_DrawStatusBarFlag( 185 + CHAR_WIDTH_CG * 3 + TEXT_ICON_SPACE + ICON_SIZE, TEAM_RED );
 	} else if ( cg.predictedPlayerState.powerups[PW_BLUEFLAG] ) {
-		CG_DrawStatusBarFlag( 185 + CHAR_WIDTH * 3 + TEXT_ICON_SPACE + ICON_SIZE, TEAM_BLUE );
+		CG_DrawStatusBarFlag( 185 + CHAR_WIDTH_CG * 3 + TEXT_ICON_SPACE + ICON_SIZE, TEAM_BLUE );
 	}
 
 	//----(SA) further change... we don't need to draw the armor do we?
@@ -722,11 +722,11 @@ static void CG_DrawStatusBar( void ) {
 			CG_SetScreenPlacement(PLACE_RIGHT, PLACE_BOTTOM);
 		}
 
-		value = ps->ammo[BG_FindAmmoForWeapon( cent->currentState.weapon )];
+        value = ps->ammo[BG_FindAmmoForWeapon( cent->currentState.weapon )];
 		inclip = ps->ammoclip[BG_FindClipForWeapon( cent->currentState.weapon )];
 
 		if ( value > -1 ) {
-			if ( cg.predictedPlayerState.weapon == WP_KNIFE || cg.predictedPlayerState.weapon == WP_DAGGER ) {
+			if ( cg.predictedPlayerState.weapon == WP_KNIFE ) {
 				color = 3; 
 			} else if ( ( cg.predictedPlayerState.weaponstate == WEAPON_FIRING || cg.predictedPlayerState.weaponstate == WEAPON_FIRINGALT )
 					&& cg.predictedPlayerState.weaponTime > 100 ) {
@@ -743,7 +743,7 @@ static void CG_DrawStatusBar( void ) {
 
 			// pulsing grenade icon to help the player 'count' in their head
 			if ( ps->grenadeTimeLeft ) {
-				if ( ps->weapon == WP_DYNAMITE ) {
+				if ( ps->weapon == WP_DYNAMITE || ps->weapon == WP_DYNAMITE_ENG  ) {
 
 				} else {
 					if ( ( ( cg.grenLastTime ) % 1000 ) < ( ( ps->grenadeTimeLeft ) % 1000 ) ) {
@@ -790,8 +790,7 @@ static void CG_DrawStatusBar( void ) {
 				break;
 			}
 
-			// don't draw ammo value for knife
-			if ( cg.predictedPlayerState.weapon != WP_DAGGER ) {
+
 				if ( cgs.dmflags & DF_NO_WEAPRELOAD ) {
 					CG_DrawBigString2( ( 580 - 23 + 35 ) + wideOffset, STATUSBARHEIGHT, va( "%d.", value ), cg_hudAlpha.value );
 				} else if ( value ) {
@@ -799,7 +798,6 @@ static void CG_DrawStatusBar( void ) {
 				} else {
 					CG_DrawBigString2( ( 580 - 23 + 35 ) + wideOffset, STATUSBARHEIGHT, va( "%d", inclip ), cg_hudAlpha.value );
 				}
-			}
             
 			icon = cg_weapons[ cg.predictedPlayerState.weapon ].weaponIcon[0];
 			if ( icon ) {
@@ -815,7 +813,7 @@ static void CG_DrawStatusBar( void ) {
 
 				icon = cg_weapons[ cg.predictedPlayerState.weapon ].ammoIcon;
 				if ( icon ) {
-					CG_DrawPic( CHAR_WIDTH * 3 + TEXT_ICON_SPACE, STATUSBARHEIGHT, ICON_SIZE, ICON_SIZE, icon );
+					CG_DrawPic( CHAR_WIDTH_CG * 3 + TEXT_ICON_SPACE, STATUSBARHEIGHT, ICON_SIZE, ICON_SIZE, icon );
 				}
 			}
 			
@@ -1073,8 +1071,9 @@ static void CG_DrawUpperRight(stereoFrame_t stereoFrame) {
 	if (cg_drawFPS.integer) {
 		y = CG_DrawFPS( stereoFrame, y );
 	}
-	if ( cg_drawTimer.integer ) {
-		y = CG_DrawTimer( y );
+	if (cg_drawTimer.integer)
+	{
+		y = CG_DrawTimer(y);
 	}
 // (SA) disabling drawattacker for the time being
 	if ( cg_oldWolfUI.integer ) {
@@ -1126,7 +1125,7 @@ static void CG_DrawScriptLabel() {
 		}
 	}
 	else {
-		s1 = va("");
+		s1 = "";
 	}
 	w1 = CG_DrawStrlen(s1) * BIGCHAR_WIDTH;
 
@@ -1134,7 +1133,7 @@ static void CG_DrawScriptLabel() {
 		s2 = va("%s", lbl->label);
 	}
 	else {
-		s2 = va("");
+		s2 = "";
 	}
 	w2 = CG_DrawStrlen(s2) * BIGCHAR_WIDTH;
 
@@ -1249,7 +1248,7 @@ static float CG_DrawPowerups( float y ) {
 	}
 
 	// draw the icons and timers
-	x = 640 - ICON_SIZE - CHAR_WIDTH * 2;
+	x = 640 - ICON_SIZE - CHAR_WIDTH_CG * 2;
 	for ( i = 0 ; i < active ; i++ ) {
 
 //		continue;   // (SA) FIXME: TEMP: as I'm getting powerup business going
@@ -1763,6 +1762,123 @@ void CG_CenterPrint( const char *str, int y, int charWidth ) {
 	}
 }
 
+
+/*
+==============
+CG_BuyPrint
+
+Called for important messages that should stay in the center of the screen
+for a few moments
+==============
+*/
+void CG_BuyPrint( const char *str, int y, int charWidth ) {
+	const char *s, *p;
+	char *c = cg.buyPrint;
+	char   token[64];
+	const char *trToken;
+	int    lenTrToken;
+	int    destSizeBuyPrint = sizeof( cg.buyPrint );
+
+	s = p = str;
+	while ( 1 ) {
+		if ( Q_isalphanumeric( *s ) ) {
+			if ( !Q_isforfilename( *p ) || *p == '\r' || *p == '\n' || *p == '\0' ) {
+				// copy translation key
+				Q_strncpyz( token, s, p - s + 1 );
+
+				// get translation
+				trToken = CG_translateString( token );
+
+				if ( Q_strncmp( trToken, token, 999999 ) == 0 ) {
+					trToken = CG_translateTextString( token );
+				}
+
+				lenTrToken = strlen( trToken );
+
+				// append translation
+				Q_strncpyz( c, trToken, destSizeBuyPrint );
+				destSizeBuyPrint -= lenTrToken;
+				c += lenTrToken;
+
+				// copy separator
+				Q_strncpyz( token, p, 2 );
+
+				// append separator
+				Q_strncpyz( c, token, destSizeBuyPrint );
+				destSizeBuyPrint -= 1;
+				c += 1;
+
+				s = p + 1;
+			}
+		} else {
+			s = p;
+		}
+
+		if ( !( *p++ ) ) {
+			break;
+		}
+	}
+
+//----(SA)	added translation lookup
+	//Q_strncpyz( cg.buyPrint, CG_translateString( (char*)str ), sizeof( cg.buyPrint ) );
+//----(SA)	end
+
+
+	cg.buyPrintTime = cg.time;
+	cg.buyPrintY = y;
+	cg.buyPrintCharWidth = charWidth;
+
+	// count the number of lines for centering
+	cg.buyPrintLines = 1;
+	s = cg.buyPrint;
+	while ( *s ) {
+		if ( *s == '\n' ) {
+			cg.buyPrintLines++;
+		}
+		if ( !Q_strncmp( s, "\\n", 1 ) ) {
+			cg.buyPrintLines++;
+			s++;
+		}
+		s++;
+	}
+}
+
+/*
+==============
+CG_EndGamePrint
+
+Called for important messages that should stay in the center of the screen
+for a few moments
+==============
+*/
+void CG_EndGamePrint( const char *str, int y, int charWidth ) {
+	char   *s;
+
+//----(SA)	added translation lookup
+	Q_strncpyz( cg.egPrint, CG_translateString( (char*)str ), sizeof( cg.egPrint ) );
+//----(SA)	end
+
+
+	cg.egPrintTime = cg.time;
+	cg.egPrintY = y;
+	cg.egPrintCharWidth = charWidth;
+
+	// count the number of lines for centering
+	cg.egPrintLines = 1;
+	s = cg.egPrint;
+	while ( *s ) {
+		if ( *s == '\n' ) {
+			cg.egPrintLines++;
+		}
+		if ( !Q_strncmp( s, "\\n", 1 ) ) {
+			cg.egPrintLines++;
+			s++;
+		}
+		s++;
+	}
+}
+
+
 /*
 ==============
 CG_BonusCenterPrint
@@ -1853,7 +1969,7 @@ void CG_SubtitlePrint( const char *str, int y, int charWidth ) {
     int minDisplayTime = 2000; // 2 seconds
     if (displayTime < minDisplayTime) {
        displayTime = minDisplayTime;
-	}
+    }
 
 	// Set the time at which the message should disappear
     cg.subtitlePrintTime = cg.time + displayTime;
@@ -1907,6 +2023,137 @@ static void CG_DrawCenterString( void ) {
 		CG_DrawStringExt( x, y, linebuffer, color, qfalse, qtrue, cg.centerPrintCharWidth, (int)( cg.centerPrintCharWidth * 1.5 ), 0 );
 
 		y += cg.centerPrintCharWidth * 2;
+
+		while ( *start && ( *start != '\n' ) ) {
+			if ( !Q_strncmp( start, "\\n", 1 ) ) {
+				start++;
+				break;
+			}
+			start++;
+		}
+		if ( !*start ) {
+			break;
+		}
+		start++;
+	}
+
+	trap_R_SetColor( NULL );
+}
+
+/*
+===================
+CG_DrawBuyString
+===================
+*/
+static void CG_DrawBuyString( void ) {
+	char    *start;
+	int l;
+	int x, y, w;
+	float   *color;
+
+	if ( !cg.buyPrintTime ) {
+		return;
+	}
+
+	color = CG_FadeColor( cg.buyPrintTime, 1000 * cg_buyprinttime.value );
+	if ( !color ) {
+		return;
+	}
+
+	if ( cg_fixedAspect.integer ) {
+		CG_SetScreenPlacement(PLACE_CENTER, PLACE_CENTER);
+	}
+
+	trap_R_SetColor( color );
+
+	start = cg.buyPrint;
+
+	y = cg.buyPrintY - cg.buyPrintLines * BIGCHAR_HEIGHT / 2;
+
+	while ( 1 ) {
+		char linebuffer[1024];
+
+		for ( l = 0; l < 50; l++ ) {
+			if ( !start[l] || start[l] == '\n' || !Q_strncmp( &start[l], "\\n", 1 ) ) {
+				break;
+			}
+			linebuffer[l] = start[l];
+		}
+		linebuffer[l] = 0;
+
+		w = cg.buyPrintCharWidth * CG_DrawStrlen( linebuffer );
+
+		x = ( SCREEN_WIDTH - w ) / 2;
+
+		CG_DrawStringExt( x, y, linebuffer, color, qfalse, qtrue, cg.buyPrintCharWidth, (int)( cg.buyPrintCharWidth * 1.5 ), 0 );
+
+		y += cg.buyPrintCharWidth * 2;
+
+		while ( *start && ( *start != '\n' ) ) {
+			if ( !Q_strncmp( start, "\\n", 1 ) ) {
+				start++;
+				break;
+			}
+			start++;
+		}
+		if ( !*start ) {
+			break;
+		}
+		start++;
+	}
+
+	trap_R_SetColor( NULL );
+}
+
+
+/*
+===================
+CG_DrawEgString
+===================
+*/
+static void CG_DrawEgString( void ) {
+	char    *start;
+	int l;
+	int x, y, w;
+	float   *color;
+
+	if ( !cg.egPrintTime ) {
+		return;
+	}
+
+	color = CG_FadeColor( cg.egPrintTime, 1000 * cg_egprinttime.value );
+	if ( !color ) {
+		return;
+	}
+
+	if ( cg_fixedAspect.integer ) {
+		CG_SetScreenPlacement(PLACE_CENTER, PLACE_CENTER);
+	}
+
+	trap_R_SetColor( color );
+
+	start = cg.egPrint;
+
+	y = cg.egPrintY - cg.egPrintLines * BIGCHAR_HEIGHT / 2;
+
+	while ( 1 ) {
+		char linebuffer[1024];
+
+		for ( l = 0; l < 50; l++ ) {
+			if ( !start[l] || start[l] == '\n' || !Q_strncmp( &start[l], "\\n", 1 ) ) {
+				break;
+			}
+			linebuffer[l] = start[l];
+		}
+		linebuffer[l] = 0;
+
+		w = cg.egPrintCharWidth * CG_DrawStrlen( linebuffer );
+
+		x = ( SCREEN_WIDTH - w ) / 2;
+
+		CG_DrawStringExt( x, y, linebuffer, color, qfalse, qtrue, cg.egPrintCharWidth, (int)( cg.egPrintCharWidth * 1.5 ), 0 );
+
+		y += cg.egPrintCharWidth * 2;
 
 		while ( *start && ( *start != '\n' ) ) {
 			if ( !Q_strncmp( start, "\\n", 1 ) ) {
@@ -2441,6 +2688,7 @@ static void CG_DrawCrosshair( void ) {
 	int weapnum;                // DHM - Nerve
 	vec4_t hcolor = {1, 1, 1, 1};
 	qboolean friendInSights = qfalse;
+	qboolean enemyInSights = qfalse;
 
 	/*if ( cg.renderingThirdPerson ) {
 		return;
@@ -2472,6 +2720,7 @@ static void CG_DrawCrosshair( void ) {
 	}
 
 	friendInSights = (qboolean)( cg.snap->ps.serverCursorHint == HINT_PLYR_FRIEND );  //----(SA)	added
+	enemyInSights  = (qboolean)( cg.snap->ps.serverCursorHint == HINT_PLYR_ENEMY );
 
 	weapnum = cg.weaponSelect;
 
@@ -2493,14 +2742,13 @@ static void CG_DrawCrosshair( void ) {
 
 		// special reticle for weapon
 	case WP_KNIFE:
-	case WP_DAGGER:
 		if ( cg.zoomedBinoc ) {
 			CG_DrawBinocReticle();
 			return;
 		}
 
 		//Don't ever draw the knife crosshair
-		return;
+		    return;
 
 		// no crosshair when looking at exits
 		if ( cg.snap->ps.serverCursorHint >= HINT_EXIT && cg.snap->ps.serverCursorHint <= HINT_NOEXIT_FAR ) {
@@ -2582,17 +2830,40 @@ static void CG_DrawCrosshair( void ) {
 		return;
 	}
 
-
 	//In VR we don't want to draw the fixed "center of the view" crosshair
 	return;
 
-	// set color based on health //RealRTCW disable for now
-	//if ( cg_crosshairHealth.integer ) {
-		//CG_ColorForHealth( hcolor );
-		//trap_R_SetColor( hcolor );
-	//} else {
-		//trap_R_SetColor( NULL );
-	//}
+	// crosshair coloring mode:
+	// 0 = off (untinted)
+	// 1 = health color
+	// 2 = untinted, but turns red when enemy is in sights
+	switch (cg_crosshairColoring.integer)
+	{
+	default:
+	case 0:
+		trap_R_SetColor(NULL);
+		break;
+
+	case 1:
+		CG_ColorForHealth(hcolor);
+		trap_R_SetColor(hcolor);
+		break;
+
+	case 2:
+		if (enemyInSights)
+		{
+			hcolor[0] = 1.0f;
+			hcolor[1] = 0.0f;
+			hcolor[2] = 0.0f;
+			// alpha already set earlier: hcolor[3] = cg_crosshairAlpha.value;
+			trap_R_SetColor(hcolor);
+		}
+		else
+		{
+			trap_R_SetColor(NULL); // "colorless"
+		}
+		break;
+	}
 
 	w = h = cg_crosshairSize.value;
 
@@ -2696,7 +2967,6 @@ static void CG_DrawCrosshair3D( qboolean akimbo ) {
 		break;
 		// special reticle for weapon
 	case WP_KNIFE:
-	case WP_DAGGER:
 		if ( cg.zoomedBinoc ) {
 			CG_DrawBinocReticle();
 			return;
@@ -2808,7 +3078,7 @@ static void CG_DrawCrosshair3D( qboolean akimbo ) {
 	stereoSep = zProj / atof(rendererinfos);
 	
 	xmax = zProj * tan(cg.refdef.fov_x * M_PI / 360.0f);
-
+	
 
 	vec3_t forward, weaponangles, origin;
 	if (akimbo)
@@ -2831,7 +3101,7 @@ static void CG_DrawCrosshair3D( qboolean akimbo ) {
 	ent.renderfx = RF_DEPTHHACK | RF_CROSSHAIR;
 	
 	VectorCopy(trace.endpos, ent.origin);
-
+	
 	// scale the crosshair so it appears the same size for all distances
 	ent.radius = w / 640 * xmax * trace.fraction * maxdist / zProj;
 	ent.customShader = hShader;
@@ -2842,6 +3112,182 @@ static void CG_DrawCrosshair3D( qboolean akimbo ) {
 	ent.shaderRGBA[3]=(byte)(hcolor[3]*255.f);
 
 	trap_R_AddRefEntityToScene(&ent);
+}
+
+// hit marker
+#define HITMARKER_DURATION				300	// msec
+#define HITMARKER_HIGHPRI_MIN_DURATION	90
+static qboolean canDrawNextHitMarker( hitEvent_t old, hitEvent_t new ) {
+	// different hit event types have different priorities
+	if ( new >= old ) {
+		return qtrue;
+	}
+
+	// ensure high priority hit events are drawn for at least a short period
+	if ( new < old && trap_Milliseconds() - cg.hitMarker.startTime > HITMARKER_HIGHPRI_MIN_DURATION ) {
+		return qtrue;
+	}
+
+	return qfalse;
+}
+
+/*
+==============
+CG_HitMarker
+==============
+*/
+void CG_HitMarker( hitEvent_t hitType ) {
+	if ( hitType < HIT_NONE || hitType >= HIT_MAX_NUM ) {
+		return;
+	}
+
+	if ( canDrawNextHitMarker( cg.hitMarker.hitType, hitType ) ) {
+		cg.hitMarker.active = qtrue;
+		cg.hitMarker.startTime = trap_Milliseconds();
+		cg.hitMarker.hitType = hitType;
+	}
+}
+
+/*
+==============
+CG_DrawHitMarker
+==============
+*/
+static void CG_DrawHitMarker( void ) {
+	float color[4];
+	float alpha, scale, progress;
+	int currentTime = trap_Milliseconds();
+	float x, y, w, h;
+	float baseSize, size;
+	qhandle_t drawShader;
+
+	if ( cg_hitMarker.integer <= 0 || cg_hitMarker.integer > NUM_HITMARKERS ) {
+		return;
+	}
+
+	if ( !cg.hitMarker.active ) {
+		return;
+	}
+
+	drawShader = cgs.media.hitMarkerShader[cg_hitMarker.integer - 1];
+	if ( !drawShader ) {
+		return;
+	}
+
+	progress = (float)(currentTime - cg.hitMarker.startTime) / (float)HITMARKER_DURATION;
+	if ( progress >= 1.0f ) {
+		cg.hitMarker.active = qfalse;
+		return;
+	}
+
+	// base size
+	if ( cg.snap->ps.eFlags & EF_MG42_ACTIVE ) {
+		// on mg42
+		baseSize = 48.0f;
+	} else if ( cg_hitMarkerSize.integer > 0 ) {
+		baseSize = (float)cg_hitMarkerSize.integer;
+	} else {
+		// auto baseSize
+		if ( cg_crosshairSize.value ) {
+			baseSize = 0.9f * cg_crosshairSize.value;
+		} else {
+			baseSize = 32.0f;
+		}
+	}
+
+	x = SCREEN_WIDTH * 0.5f;
+	y = SCREEN_HEIGHT * 0.5f;
+	CG_AdjustFrom640( &x, &y, &w, &h );
+
+	// fade-out (30%)
+	if ( progress < 0.7f ) {
+		alpha = 1.0f;
+	} else {
+		alpha = 1.0f - (progress - 0.7f) / 0.3f;
+	}
+	alpha *= cg_hitMarkerAlpha.value;
+
+	// default color, white
+	color[0] = 1.0f;  // R
+	color[1] = 1.0f;  // G
+	color[2] = 1.0f;  // B
+	color[3] = alpha; // A
+
+	if ( progress < 0.2f ) {
+		// blowing up stage (0-20%)
+		scale = 1.0f + (progress * 2.0f);			// 1.0 -> 1.4
+	} else if ( progress < 0.4f ) {
+		// shrinking stage (20-40%)
+		scale = 1.4f - (progress - 0.2f) * 2.0f;	// 1.4 -> 1.0
+	} else {
+		// slowly shrinking stage (40-100%)
+		scale = 1.0f - (progress - 0.4f) * 1.0f;	// 1.0 -> 0.6
+	}
+
+	// adapt the size change of the crosshair during uninterrupted shooting, see CG_DrawCursorhint
+	if ( !cg_solidHitMarker.integer ) {
+		float f = (float)cg.snap->ps.aimSpreadScale / 255.0f;
+		scale *= 1.0f + f * 0.75f;
+	}
+
+	// set visual effect for specific hit type
+	if ( cg.hitMarker.hitType == HIT_TEAMSHOT ) {
+		size = baseSize * scale;
+
+		// yellow
+		color[0] = 1.0f;  // R
+		color[1] = 1.0f;  // G
+		color[2] = 0.0f;  // B
+	} else if ( cg.hitMarker.hitType == HIT_BODYSHOT ) {
+		size = baseSize * scale;
+	} else if ( cg.hitMarker.hitType == HIT_HEADSHOT ) {
+		size = baseSize * scale * 1.15f;  // larger
+
+		// shake effect
+		if ( progress < 0.3f ) {
+			float shake = sinf( progress * 20.0f ) * 3.0f;
+			x += shake;
+			y += shake;
+		}
+	} else if ( cg.hitMarker.hitType == HIT_DEATHSHOT ) {
+		size = baseSize * scale * 1.25f;  // larger
+
+		// red
+		color[0] = 1.0f;  // R
+		color[1] = 0.1f;  // G
+		color[2] = 0.1f;  // B
+
+		// golden
+		// color[0] = 1.0f;  // R
+		// color[1] = 0.8f;  // G
+		// color[2] = 0.1f;  // B
+
+		// flash effect
+		if ( (int)(progress * 20.0f) % 2 == 0 ) {
+			color[3] = alpha * 0.75f;
+		}
+	} else {
+		return;
+	}
+
+	// start drawing
+	trap_R_SetColor( color );
+	trap_R_DrawStretchPic( x - size * 0.5f, y - size * 0.5f, size, size, 0, 0, 1, 1, drawShader );
+	
+	// for special hit, add additional halo effects
+	if ( ( cg.hitMarker.hitType == HIT_HEADSHOT || cg.hitMarker.hitType == HIT_DEATHSHOT ) && progress < 0.6f ) {
+		float haloAlpha = alpha * 0.3f;
+		float haloSize = size * 1.55f;
+		float haloProgress = progress * 1.5f;
+		
+		if ( haloProgress < 1.0f ) {
+			color[3] = haloAlpha * (1.0f - haloProgress);
+			trap_R_SetColor( color );
+			trap_R_DrawStretchPic( x - haloSize * 0.5f, y - haloSize * 0.5f, haloSize, haloSize, 0, 0, 1, 1, drawShader );
+		}
+	}
+	
+	trap_R_SetColor( NULL );
 }
 
 /*
@@ -2855,7 +3301,7 @@ static void CG_DrawDynamiteStatus( void ) {
 	int timeleft;
 	float w;
 
-	if ( cg.snap->ps.weapon != WP_DYNAMITE ) {
+	if ( cg.snap->ps.weapon != WP_DYNAMITE && cg.snap->ps.weapon != WP_DYNAMITE_ENG ) {
 		return;
 	}
 
@@ -2896,6 +3342,7 @@ static void CG_DrawDynamiteStatus( void ) {
 CG_ScanForCrosshairEntity
 =================
 */
+static qboolean doScan = qtrue;
 static void CG_ScanForCrosshairEntity( void ) {
 	trace_t trace;
 	vec3_t start, end;
@@ -2907,8 +3354,11 @@ static void CG_ScanForCrosshairEntity( void ) {
 	CG_Trace( &trace, start, vec3_origin, vec3_origin, end,
 			  cg.snap->ps.clientNum, CONTENTS_SOLID | CONTENTS_BODY | CONTENTS_ITEM );
 
-	if ( trace.entityNum >= MAX_CLIENTS ) {
+	if ( trace.entityNum >= MAX_CLIENTS && doScan != qtrue ) {
+		doScan = qfalse;
 		return;
+	} else {
+		doScan = qtrue;
 	}
 
 	// if the player is in fog, don't show it
@@ -2989,8 +3439,8 @@ static void CG_DrawCrosshairNames( void ) {
 	}
 
 	if ( cg.crosshairClientNum > MAX_CLIENTS ) {
-return;
-}
+		return;
+	}
 
 	name = cgs.clientinfo[ cg.crosshairClientNum ].translation;
 
@@ -3060,6 +3510,8 @@ CG_DrawIntermission
 static void CG_DrawIntermission( void ) {
 
 	CG_DrawCenterString();
+	CG_DrawBuyString();
+	CG_DrawEgString();
 	CG_DrawSubtitleString();
 	return;
 
@@ -3205,9 +3657,42 @@ static void CG_DrawFlashFade( void ) {
 			CG_SetScreenPlacement(PLACE_STRETCH, PLACE_STRETCH);
 		 	CG_FillRect( 0, 0, 640, 480, col );
 			CG_SetScreenPlacement(PLACE_CENTER, PLACE_CENTER);
-		} else {	
+		} else {
 			CG_FillRect( 0, 0, 640, 480, col );
 		}
+	}
+}
+
+/*
+=================
+CG_DrawTimeDilationEffect
+
+Cosmetic desaturating/dark vignette overlay, sells the world-slow-motion
+effect while the weapon wheel is open. Purely presentational -- driven by
+cgs.timeDilation, which mirrors the authoritative CS_TIMEDILATION value.
+=================
+*/
+static void CG_DrawTimeDilationEffect( void ) {
+	vec4_t col;
+	float amount;
+
+	amount = 1.0f - cgs.timeDilation;
+	if ( amount <= 0.0f ) {
+		return;
+	}
+	if ( amount > 1.0f ) {
+		amount = 1.0f;
+	}
+
+	VectorClear( col );
+	col[3] = amount * 0.35f;
+
+	if ( cg_fixedAspect.integer ) {
+		CG_SetScreenPlacement( PLACE_STRETCH, PLACE_STRETCH );
+		CG_FillRect( 0, 0, 640, 480, col );
+		CG_SetScreenPlacement( PLACE_CENTER, PLACE_CENTER );
+	} else {
+		CG_FillRect( 0, 0, 640, 480, col );
 	}
 }
 
@@ -3236,11 +3721,11 @@ static void CG_DrawFlashZoomTransition( void ) {
 		return;
 	}
 
-	if ( cg.zoomedScope ) {
-		fadeTime = cg.zoomedScope;  //----(SA)
-	} else {
-		fadeTime = 300;
-	}
+		if ( cg.zoomedScope ) {
+			fadeTime = cg.zoomedScope;  //----(SA)
+		} else {
+			fadeTime = 300;
+		}
 
 
 	frac = cg.time - cg.zoomTime;
@@ -3435,6 +3920,7 @@ static void CG_DrawFlashBlend( void ) {
 	CG_DrawFlashFire();
 	CG_DrawFlashDamage();
 	CG_DrawFlashFade();
+	CG_DrawTimeDilationEffect();
 	cg.coverView = qfalse;
 }
 
@@ -3712,15 +4198,16 @@ static void CG_Draw2D(stereoFrame_t stereoFrame) {
 		CG_DrawWeapReticle();   // (for scopes)
 		CG_DrawCrosshair();
 		CG_DrawHoldableSelect();
-	if ( cg.zoomedBinoc ) {
-		CG_DrawBinocReticle();  // (for binocs)
-		return;
-	}
+		if ( cg.zoomedBinoc ) {
+			CG_DrawBinocReticle();  // (for binocs)
+			return;
+		}
 		return;
 	}
 
 	if ( cg.zoomedBinoc ) {
 		CG_DrawBinocReticle();
+		CG_DrawSubtitleString();
 		return;
 	}
 
@@ -3747,6 +4234,7 @@ static void CG_Draw2D(stereoFrame_t stereoFrame) {
 			CG_DrawCrosshair();
 
 		CG_DrawCrosshairNames();
+		CG_DrawHitMarker();
 	} else {
 		// don't draw any status if dead
 		if ( cg.snap->ps.stats[STAT_HEALTH] > 0 && !cg.cameraMode) {
@@ -3759,7 +4247,7 @@ static void CG_Draw2D(stereoFrame_t stereoFrame) {
 					CG_SetScreenPlacement(PLACE_LEFT, PLACE_BOTTOM);
 				}
 
-if ( !cg_oldWolfUI.integer ) {
+				if ( !cg_oldWolfUI.integer ) {
 					Menu_PaintAll();
 					CG_DrawTimedMenus();
 				}
@@ -3778,6 +4266,7 @@ if ( !cg_oldWolfUI.integer ) {
 			CG_DrawCheckpointString();
 			CG_DrawGameSavedString();
 			CG_DrawReward();
+			CG_DrawHitMarker();
 		}
 	}
 
@@ -3799,9 +4288,17 @@ if ( !cg_oldWolfUI.integer ) {
 		CG_DrawWarmup();
 	}
 
+	if (cg.weaponWheel.active)
+	{
+		CG_UpdateWeaponWheelSelection(cgs.cursorX, cgs.cursorY);
+		CG_DrawWeaponWheel();
+	}
+
 	// don't draw center string if scoreboard is up
 	if ( !CG_DrawScoreboard() ) {
 		CG_DrawCenterString();
+		CG_DrawBuyString();
+		CG_DrawEgString();
 		CG_DrawSubtitleString();
 		CG_DrawObjectiveInfo();     // NERVE - SMF
 	}
@@ -4112,3 +4609,399 @@ void CG_DrawActive( stereoFrame_t stereoView ) {
 	}
 }
 
+
+// WEAPON WHEEL ROUTINE HERE //
+
+static qboolean isChargeBased( int weap ) {
+	switch ( weap ) {
+	case WP_AIRSTRIKE:
+	case WP_POISONGAS:
+	case WP_DYNAMITE_ENG:
+	case WP_SMOKE_BOMB:
+		return qtrue;
+	}
+	return qfalse;
+}
+
+static qboolean isClipOnly( int weap ) {
+	switch ( weap ) {
+	case WP_GRENADE_LAUNCHER:
+	case WP_GRENADE_PINEAPPLE:
+	case WP_DYNAMITE:
+	case WP_TESLA:
+	case WP_FLAMETHROWER:
+	case WP_KNIFE:
+		return qtrue;
+	}
+	return qfalse;
+}
+
+int CG_CollectWeaponWheelWeapons( int *visibleWeapons, int maxWeapons ) {
+	int numVisible = 0;
+
+	for ( int w = 1; w < MAX_WEAPONS; w++ ) {
+
+		if ( !COM_BitCheck( cg.snap->ps.weapons, w ) )
+			continue;
+
+		switch ( w ) {
+
+		case WP_KNIFE:
+		case WP_LUGER:
+		case WP_SILENCER:
+		case WP_COLT:
+		case WP_AKIMBO:
+		case WP_TT33:
+		case WP_DUAL_TT33:
+		case WP_REVOLVER:
+		case WP_HDM:
+
+		case WP_MP40:
+		case WP_MP34:
+		case WP_STEN:
+		case WP_THOMPSON:
+		case WP_PPSH:
+
+		case WP_MAUSER:
+		case WP_GARAND:
+		case WP_MOSIN:
+		case WP_DELISLE:
+
+		case WP_G43:
+		case WP_M1GARAND:
+		case WP_M1941:
+
+		case WP_FG42:
+		case WP_MP44:
+		case WP_BAR:
+
+		case WP_M97:
+		case WP_AUTO5:
+		case WP_M30:
+
+		case WP_PANZERFAUST:
+		case WP_FLAMETHROWER:
+		case WP_MG42M:
+		case WP_BROWNING:
+
+		case WP_VENOM:
+		case WP_TESLA:
+
+		case WP_GRENADE_LAUNCHER:
+		case WP_POISONGAS:
+		case WP_GRENADE_PINEAPPLE:
+		case WP_DYNAMITE:
+		case WP_DYNAMITE_ENG:
+		case WP_AIRSTRIKE:
+		case WP_SMOKE_BOMB:
+			break;
+
+		default:
+			continue;
+		}
+
+        if ( cgs.gametype != GT_SURVIVAL ) {
+		if ( !isChargeBased( w ) ) {
+			int ammoIndex = BG_FindAmmoForWeapon( w );
+			int clipIndex = BG_FindClipForWeapon( w );
+
+			if ( ammoIndex < 0 && clipIndex < 0 )
+				continue;
+
+			if ( ( ammoIndex < 0 || cg.snap->ps.ammo[ammoIndex] <= 0 ) &&
+				( clipIndex < 0 || cg.snap->ps.ammoclip[clipIndex] <= 0 ) )
+				continue;
+		}
+		}
+
+		if ( numVisible >= maxWeapons ) {
+			break;
+		}
+
+		visibleWeapons[numVisible++] = w;
+	}
+
+	return numVisible;
+}
+
+static void CG_WeaponWheelAmmoText( int weap, char *buffer, int bufferSize ) {
+	int ammoIndex;
+	int clipIndex;
+
+	buffer[0] = '\0';
+
+	if ( isChargeBased( weap ) ) {
+		return;
+	}
+
+	ammoIndex = BG_FindAmmoForWeapon( weap );
+	clipIndex = BG_FindClipForWeapon( weap );
+
+	if ( isClipOnly( weap ) ) {
+		if ( clipIndex >= 0 ) {
+			Com_sprintf( buffer, bufferSize, "%i",
+				cg.snap->ps.ammoclip[clipIndex] );
+		}
+		return;
+	}
+
+	if ( clipIndex >= 0 && ammoIndex >= 0 ) {
+		Com_sprintf( buffer, bufferSize, "%i/%i",
+			cg.snap->ps.ammoclip[clipIndex],
+			cg.snap->ps.ammo[ammoIndex] );
+	} else if ( ammoIndex >= 0 ) {
+		Com_sprintf( buffer, bufferSize, "%i",
+			cg.snap->ps.ammo[ammoIndex] );
+	} else if ( clipIndex >= 0 ) {
+		Com_sprintf( buffer, bufferSize, "%i",
+			cg.snap->ps.ammoclip[clipIndex] );
+	}
+}
+
+
+static const char *CG_WeaponWheelName( int weap ) {
+	gitem_t *item;
+	int itemNum;
+
+	item = BG_FindItemForWeapon( weap );
+	if ( !item ) {
+		return "";
+	}
+
+	itemNum = item - bg_itemlist;
+
+	if ( itemNum <= 0 ) {
+		return "";
+	}
+
+	if ( !cgs.itemPrintNames[itemNum][0] ) {
+		return "";
+	}
+
+	return cgs.itemPrintNames[itemNum];
+}
+
+void CG_DrawWeaponWheel( void ) {
+	float cx, cy;
+	float radius;
+
+	if ( !cg.weaponWheel.active ) {
+		return;
+	}
+
+	cx = SCREEN_WIDTH * 0.35f;
+	cy = SCREEN_HEIGHT * 0.5f;
+
+	int visibleWeapons[MAX_WEAPONS];
+	int numVisible = CG_CollectWeaponWheelWeapons( visibleWeapons, MAX_WEAPONS );
+
+	if ( numVisible <= 0 ) {
+		return;
+	}
+
+	// --- dynamic radius ---
+	float t = ( cg.time - cg.weaponWheel.openTime ) / 150.0f;
+	if ( t > 1.0f )
+		t = 1.0f;
+
+	float baseRadius = 100.0f;
+	float extra = numVisible * 3.0f;
+
+	radius = baseRadius + extra;
+	radius *= t;
+
+	if ( numVisible < 5 ) {
+		radius = 85.0f * t;
+	}
+
+	if ( radius > 200.0f ) {
+		radius = 200.0f;
+	}
+
+	// --- adaptive scale ---
+	float scale = 1.0f;
+
+	if ( numVisible > 10 ) {
+		scale = 0.8f;
+	}
+	if ( numVisible > 16 ) {
+		scale = 0.65f;
+	}
+
+	for ( int idx = 0; idx < numVisible; idx++ ) {
+
+		int weap = visibleWeapons[idx];
+
+		CG_RegisterWeapon( weap, qfalse );
+
+		qboolean wideweap;
+
+		switch ( weap ) {
+		case WP_THOMPSON:
+		case WP_MP40:
+		case WP_MP34:
+		case WP_PPSH:
+		case WP_MOSIN:
+		case WP_G43:
+		case WP_M1GARAND:
+		case WP_BAR:
+		case WP_M30:
+		case WP_MP44:
+		case WP_MG42M:
+		case WP_M97:
+		case WP_AUTO5:
+		case WP_BROWNING:
+		case WP_STEN:
+		case WP_MAUSER:
+		case WP_DELISLE:
+		case WP_GARAND:
+		case WP_VENOM:
+		case WP_TESLA:
+		case WP_PANZERFAUST:
+		case WP_FLAMETHROWER:
+		case WP_FG42:
+		case WP_FG42SCOPE:
+		case WP_M1941:
+			wideweap = qtrue;
+			break;
+		default:
+			wideweap = qfalse;
+			break;
+		}
+
+		float selectedScale = ( weap == cg.weaponWheel.hoveredWeapon ) ? 1.3f : 1.0f;
+
+		float h = 40.0f * scale * selectedScale;
+		float w = wideweap ? ( h * 2.0f ) : h;
+
+		float x = cx;
+		float y = cy;
+
+		if ( numVisible == 1 ) {
+			x = cx;
+			y = cy - radius;
+		} else if ( numVisible == 2 ) {
+			if ( idx == 0 ) {
+				x = cx - radius;
+				y = cy;
+			} else {
+				x = cx + radius;
+				y = cy;
+			}
+		} else if ( numVisible == 3 ) {
+			if ( idx == 0 ) {
+				x = cx;
+				y = cy - radius;
+			} else if ( idx == 1 ) {
+				x = cx + radius * 0.85f;
+				y = cy + radius * 0.55f;
+			} else {
+				x = cx - radius * 0.85f;
+				y = cy + radius * 0.55f;
+			}
+		} else if ( numVisible == 4 ) {
+			if ( idx == 0 ) {
+				x = cx;
+				y = cy - radius;
+			} else if ( idx == 1 ) {
+				x = cx + radius;
+				y = cy;
+			} else if ( idx == 2 ) {
+				x = cx;
+				y = cy + radius;
+			} else {
+				x = cx - radius;
+				y = cy;
+			}
+		} else {
+			float angleOffset = ( 2.0f * M_PI ) / (float)numVisible * 0.5f;
+			float angle = ( (float)idx / (float)numVisible ) * 2.0f * M_PI;
+			angle += angleOffset;
+			angle -= M_PI * 0.5f;
+
+			x = cx + cosf( angle ) * radius;
+			y = cy + sinf( angle ) * radius;
+		}
+
+		qhandle_t icon;
+
+		if ( weap == cg.weaponWheel.hoveredWeapon ) {
+			icon = cg_weapons[weap].weaponIcon[1];
+		} else {
+			icon = cg_weapons[weap].weaponIcon[0];
+		}
+
+		CG_DrawPic( x - w * 0.5f, y - h * 0.5f, w, h, icon );
+	}
+
+	if ( cg.weaponWheel.hoveredWeapon > 0 ) {
+		const char *weaponName = CG_WeaponWheelName( cg.weaponWheel.hoveredWeapon );
+		char ammoText[32];
+		float color[4];
+		int w;
+
+		CG_WeaponWheelAmmoText( cg.weaponWheel.hoveredWeapon, ammoText, sizeof( ammoText ) );
+
+		color[0] = 1.0f;
+		color[1] = 1.0f;
+		color[2] = 1.0f;
+		color[3] = 1.0f;
+
+		if ( weaponName && weaponName[0] ) {
+			w = CG_DrawStrlen( weaponName ) * 10;
+
+#ifdef LOCALISATION
+			CG_DrawStringExt2(
+				cx - ( w * 0.5f ),
+				cy + 20.0f,
+				CG_TranslateString( weaponName ),
+				color,
+				qfalse,
+				qtrue,
+				10,
+				10,
+				0
+			);
+#else
+			CG_DrawStringExt2(
+				cx - ( w * 0.5f ),
+				cy + 20.0f,
+				weaponName,
+				color,
+				qfalse,
+				qtrue,
+				10,
+				10,
+				0
+			);
+#endif
+		}
+
+		if ( ammoText[0] ) {
+			w = CG_DrawStrlen( ammoText ) * 8;
+
+			CG_DrawStringExt2(
+				cx - ( w * 0.5f ),
+				cy + 34.0f,
+				ammoText,
+				color,
+				qfalse,
+				qtrue,
+				8,
+				8,
+				0
+			);
+		}
+	}
+
+	// --- cursor ---
+	if ( fabsf( cg.weaponWheel.stickX ) <= 0.2f && fabsf( cg.weaponWheel.stickY ) <= 0.2f )
+	{
+		CG_DrawPic(
+			cgs.cursorX - 8.0f,
+			cgs.cursorY - 8.0f,
+			16.0f,
+			16.0f,
+			cgs.media.selectCursor );
+	}
+}

@@ -48,6 +48,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "../steam/steam.h"
 
+#include <stdlib.h> // for rand()
+
+#include "g_survival.h"
+
 /*
 Contains the code to handle the various commands available with an event script.
 
@@ -87,6 +91,33 @@ void AICast_NoAttackIfNotHurtSinceLastScriptAction( cast_state_t *cs ) {
 	}
 }
 
+// A few helpers for the prefix markers feature we're added for the gotomarker
+
+qboolean Q_StringStartsWith( const char *s, const char *prefix ) {
+    if ( !s || !prefix ) return qfalse;
+    while ( *prefix ) {
+        if ( tolower(*s) != tolower(*prefix) ) return qfalse;
+        s++; prefix++;
+    }
+    return qtrue;
+}
+
+int AICast_TravelTimeToPoint( cast_state_t *cs, const vec3_t goalOrg ) {
+    int fromArea = trap_AAS_PointAreaNum( cs->bs->origin );
+    int toArea   = trap_AAS_PointAreaNum( (float *)goalOrg );
+
+    if ( fromArea <= 0 || toArea <= 0 ) {
+        return 0;
+    }
+
+    return trap_AAS_AreaTravelTimeToGoalArea(
+        fromArea,
+        cs->bs->origin,
+        toArea,
+        cs->travelflags
+    );
+}
+
 /*
 ===============
 AICast_ScriptAction_GotoMarker
@@ -101,6 +132,9 @@ qboolean AICast_ScriptAction_GotoMarker( cast_state_t *cs, char *params ) {
 	vec3_t vec, org;
 	int i, diff;
 	qboolean slowApproach;
+	qboolean groupMode = qfalse;
+	char prefix[64];
+	int prefixLen;
 
 	ent = NULL;
 
@@ -116,13 +150,16 @@ qboolean AICast_ScriptAction_GotoMarker( cast_state_t *cs, char *params ) {
 	pString = params;
 	token = COM_ParseExt( &pString, qfalse );
 	if ( !token[0] ) {
-		G_Error( "AI Scripting: gotomarker must have an targetname\n" );
+		G_Printf( "WARNING: AI Scripting: gotomarker must have an targetname\n" );
+		return qtrue;
 	}
 
 	// if we already are going to the marker, just use that, and check if we're in range
 	if ( cs->castScriptStatus.scriptGotoEnt >= 0 && cs->castScriptStatus.scriptGotoId == cs->thinkFuncChangeTime ) {
 		ent = &g_entities[cs->castScriptStatus.scriptGotoEnt];
-		if ( ent->targetname && !Q_strcasecmp( ent->targetname, token ) ) {
+		if (cs->castScriptStatus.scriptGotoIsGroup ||
+			(ent->targetname && !Q_strcasecmp(ent->targetname, token)))
+		{
 			// if we're not slowing down, then check for passing the marker, otherwise check distance only
 			VectorSubtract( ent->r.currentOrigin, cs->bs->origin, vec );
 			//
@@ -146,7 +183,9 @@ qboolean AICast_ScriptAction_GotoMarker( cast_state_t *cs, char *params ) {
 					if ( !ent ) {
 						ent = AICast_FindEntityForName( token );
 						if ( !ent ) {
-							G_Error( "AI Scripting: gotomarker cannot find targetname \"%s\"\n", token );
+							G_Printf( "WARNING: AI Scripting: gotomarker cannot find targetname \"%s\"\n", token );
+							cs->followTime = level.time + 500;
+							return qfalse;
 						}
 					}
 					// set the view angle manually
@@ -184,24 +223,90 @@ qboolean AICast_ScriptAction_GotoMarker( cast_state_t *cs, char *params ) {
 				cs->followTime = level.time + 500;
 				return qfalse;
 			}
-		} else
+		}
+		else
 		{
 			ent = NULL;
 		}
 	}
 
-	// find the ai_marker with the given "targetname"
+    Q_strncpyz( prefix, token, sizeof(prefix) );
 
-	while ( ( ent = G_Find( ent, FOFS( classname ), "ai_marker" ) ) )
-	{
-		if ( ent->targetname && !Q_strcasecmp( ent->targetname, token ) ) {
-			break;
-		}
-	}
+    prefixLen = strlen(prefix);
+    if ( prefixLen > 0 && prefix[prefixLen - 1] == '*' ) {
+        groupMode = qtrue;
+        prefix[prefixLen - 1] = '\0'; // strip '*'
+    }
 
-	if ( !ent ) {
-		G_Error( "AI Scripting: gotomarker can't find ai_marker with \"targetname\" = \"%s\"\n", token );
-	}
+    ent = NULL;
+
+    if ( !groupMode ) {
+        // original exact match behavior
+        while ( ( ent = G_Find( ent, FOFS( classname ), "ai_marker" ) ) ) {
+            if ( ent->targetname && !Q_strcasecmp( ent->targetname, prefix ) ) {
+                break;
+            }
+        }
+    } else {
+        // group/prefix mode: pick best marker at runtime
+        gentity_t *best = NULL;
+        int bestTT = 0x7fffffff;
+        float bestDistSq = 0.0f;
+        qboolean haveTT = qfalse;
+
+        while ( ( ent = G_Find( ent, FOFS( classname ), "ai_marker" ) ) ) {
+            vec3_t org;
+            vec3_t d;
+            float distSq;
+            int tt;
+
+            if ( !ent->targetname ) continue;
+            if ( !Q_StringStartsWith( ent->targetname, prefix ) ) continue;
+
+            // Evaluate marker origin for cost
+            VectorCopy( ent->r.currentOrigin, org );
+
+            tt = AICast_TravelTimeToPoint( cs, org );
+            if ( tt > 0 ) {
+                // Prefer travel time (AAS)
+                if ( tt < bestTT ) {
+                    bestTT = tt;
+                    best = ent;
+                    haveTT = qtrue;
+                }
+            } else if ( !haveTT ) {
+                // Fallback: distance only if we have no travel time candidates
+                VectorSubtract( org, cs->bs->origin, d );
+                distSq = VectorLengthSquared( d );
+                if ( !best || distSq < bestDistSq ) {
+                    bestDistSq = distSq;
+                    best = ent;
+                }
+            }
+        }
+
+        ent = best;
+    }
+
+    if ( !ent ) {
+        if ( !groupMode ) {
+            G_Printf( "WARNING: AI Scripting: gotomarker can't find ai_marker with \"targetname\" = \"%s\"\n", prefix );
+        } else {
+            G_Printf( "WARNING: AI Scripting: gotomarker can't find ai_marker with prefix \"%s*\"\n", prefix );
+        }
+
+        cs->castScriptStatus.scriptGotoEnt = -1;
+        cs->castScriptStatus.scriptGotoId = 0;
+        cs->castScriptStatus.scriptGotoIsGroup = qfalse;
+        cs->castScriptStatus.scriptNoMoveTime = 0;
+        cs->followTime = 0;
+        cs->followIsGoto = qfalse;
+        AIFunc_IdleStart( cs );
+        return qtrue;
+    }
+
+    // Remember which mode we used, so the cached section doesn't compare exact name
+    cs->castScriptStatus.scriptGotoIsGroup = groupMode;
 
 	if ( Distance( cs->bs->origin, ent->r.currentOrigin ) < SCRIPT_REACHGOAL_DIST ) { // we made it
 		return qtrue;
@@ -453,6 +558,171 @@ qboolean AICast_ScriptAction_CrouchToCast( cast_state_t *cs, char *params ) {
 	return qtrue;
 }
 
+// DEFENSE ACTIONS //
+
+static void AICast_Defend_ClearCombat( cast_state_t *cs ) {
+    cs->enemyNum = -1;
+    cs->lastEnemy = -1;
+
+    // kill any “go chase” intentions
+    cs->combatGoalTime = 0;
+    cs->battleHuntPauseTime = 0;
+    VectorClear( cs->takeCoverPos );
+}
+
+
+qboolean AICast_ScriptAction_Defend( cast_state_t *cs, char *params ) {
+    char *pString = params;
+    char *token;
+    gentity_t *marker = NULL;
+    float radius = 320.0f;
+    int timeout = 0;
+
+    if ( !params || !params[0] ) {
+        G_Error( "AI Scripting:defend without parameters\n" );
+    }
+
+    // markername
+    token = COM_ParseExt( &pString, qfalse );
+    if ( !token[0] ) {
+        G_Error( "AI Scripting: syntax: defend <markername> [radius] [timeout_ms]\n" );
+    }
+
+    marker = G_FindByTargetname( NULL, token );
+
+    if ( marker ) {
+        VectorCopy( marker->r.currentOrigin, cs->defendOrigin );
+    } else {
+        // fallback: current pos (still useful)
+        VectorCopy( cs->bs->origin, cs->defendOrigin );
+    }
+
+    // optional radius
+    token = COM_ParseExt( &pString, qfalse );
+    if ( token[0] ) radius = atof( token );
+
+    // optional timeout (ms)
+    token = COM_ParseExt( &pString, qfalse );
+    if ( token[0] ) timeout = atoi( token );
+
+    cs->defendActive = qtrue;
+    cs->defendRadius = radius;
+    cs->defendLeash  = radius + 128.0f; // slack so they can strafe/fight
+    cs->defendExpireTime = ( timeout > 0 ) ? ( level.time + timeout ) : 0;
+    cs->defendRepathTime = 0;
+
+	// if we're outside, explicitly enter return-to-defend mode
+	if (Distance(cs->bs->origin, cs->defendOrigin) > cs->defendRadius)
+	{
+		cs->defendReturning = qtrue;
+
+		// clear combat so he commits to returning smoothly
+		AICast_Defend_ClearCombat(cs);
+	}
+	else
+	{
+		cs->defendReturning = qfalse;
+	}
+
+	// IMPORTANT:
+    // Do NOT force some invented state. Just let the regular logic run.
+    AIFunc_DefaultStart( cs );
+
+    return qtrue;
+}
+
+qboolean AICast_ScriptAction_DefendStop( cast_state_t *cs, char *params ) {
+    cs->defendActive = qfalse;
+	cs->defendReturning = qfalse;
+    cs->defendExpireTime = 0;
+    cs->defendRepathTime = 0;
+    return qtrue;
+}
+
+qboolean AICast_Defend_Update( cast_state_t *cs ) {
+    float distFromHome;
+
+    if ( !cs->defendActive ) return qfalse;
+
+    // timeout
+    if ( cs->defendExpireTime && level.time >= cs->defendExpireTime ) {
+        cs->defendActive = qfalse;
+        cs->defendReturning = qfalse;
+        cs->defendExpireTime = 0;
+        return qfalse;
+    }
+
+    distFromHome = Distance( cs->bs->origin, cs->defendOrigin );
+
+    //
+    // 1) RETURNING MODE: stable navigation back home
+    //
+    if ( cs->defendReturning ) {
+
+        // Arrived?
+        if ( distFromHome <= ( cs->defendRadius * 0.75f ) ) {
+            cs->defendReturning = qfalse;
+            cs->defendRepathTime = 0;
+            return qfalse; // allow normal logic now
+        }
+
+        // While returning, don't chase enemies
+        if ( cs->enemyNum >= 0 ) {
+            if ( !AICast_CheckAttack( cs, cs->enemyNum, qfalse ) ) {
+                AICast_Defend_ClearCombat( cs );
+            }
+        }
+
+        // Drive movement smoothly
+        if ( cs->defendRepathTime < level.time ) {
+            cs->defendRepathTime = level.time + 300; // little tighter helps smoothness
+            AICast_MoveToPos( cs, cs->defendOrigin, -1 );
+        } else {
+            // still keep moving along existing move plan
+            AICast_MoveToPos( cs, cs->defendOrigin, -1 );
+        }
+
+        return qtrue; // handled
+    }
+
+    //
+    // 2) HARD LEASH: if pulled way out during combat, enter returning mode
+    //
+    if ( distFromHome > cs->defendLeash ) {
+        cs->defendReturning = qtrue;
+        AICast_Defend_ClearCombat( cs );
+        cs->defendRepathTime = 0;
+        return qtrue;
+    }
+
+    //
+    // 3) Enemy leash rule: don't chase targets outside leash
+    //
+    if ( cs->enemyNum >= 0 ) {
+        float enemyDistFromHome = Distance( g_entities[cs->enemyNum].r.currentOrigin, cs->defendOrigin );
+
+        if ( enemyDistFromHome > cs->defendLeash ) {
+            // If can't attack from here, drop and return to home logic
+            if ( !AICast_CheckAttack( cs, cs->enemyNum, qfalse ) ) {
+                AICast_Defend_ClearCombat( cs );
+            }
+        }
+    }
+
+    //
+    // 4) Soft radius: if idle and drifted out, enter returning mode (smoothly)
+    //
+    if ( cs->enemyNum < 0 && distFromHome > cs->defendRadius ) {
+        cs->defendReturning = qtrue;
+        cs->defendRepathTime = 0;
+        return qtrue;
+    }
+
+    return qfalse;
+}
+
+
+// DEFENSE ACTIONS END //
 
 /*
 ==============
@@ -621,16 +891,23 @@ qboolean AICast_ScriptAction_Trigger( cast_state_t *cs, char *params ) {
 		G_Error( "AI Scripting: trigger must have a name and an identifier\n" );
 	}
 
-	ent = AICast_FindEntityForName( token );
-	if ( !ent ) {
-		ent = G_Find( &g_entities[MAX_CLIENTS], FOFS( scriptName ), token );
+	// ---- self* support (minimal, safe, non-breaking)
+	// "self*" means: trigger this AI's own ainame
+	if ( !Q_stricmp( token, "self*" ) ) {
+		ent = &g_entities[ cs->entityNum ];
+	} else {
+		ent = AICast_FindEntityForName( token );
 		if ( !ent ) {
-			if ( trap_Cvar_VariableIntegerValue( "developer" ) ) {
-				G_Printf( "AI Scripting: trigger can't find AI cast with \"ainame\" = \"%s\"\n", params );
+			ent = G_Find( &g_entities[MAX_CLIENTS], FOFS( scriptName ), token );
+			if ( !ent ) {
+				if ( trap_Cvar_VariableIntegerValue( "developer" ) ) {
+					G_Printf( "AI Scripting: trigger can't find AI cast with \"ainame\" = \"%s\"\n", params );
+				}
+				return qtrue;
 			}
-			return qtrue;
 		}
 	}
+	// ---- end self* support
 
 	token = COM_ParseExt( &pString, qfalse );
 	if ( !token[0] ) {
@@ -657,6 +934,10 @@ AICast_ScriptAction_FollowCast
 */
 qboolean AICast_ScriptAction_FollowCast( cast_state_t *cs, char *params ) {
 	gentity_t *ent;
+
+	if (!params || !params[0]) {
+		G_Error("AI Scripting: followcast requires ainame\n");
+	}
 
 	// find the cast/player with the given "name"
 	ent = AICast_FindEntityForName( params );
@@ -1149,17 +1430,21 @@ qboolean AICast_ScriptAction_SetClip( cast_state_t *cs, char *params ) {
 	return qtrue;
 }
 
-
-
 /*
 ==============
 AICast_ScriptAction_SuggestWeapon
+
+  syntax: suggestweapon <pickupname>
 ==============
 */
 qboolean AICast_ScriptAction_SuggestWeapon( cast_state_t *cs, char *params ) {
 	int weapon;
 	int i;
 	//int		suggestedweaps = 0; // TTimo: unused
+
+	if (!params || !params[0]) {
+		G_Error("AI Scripting: suggestweapon requires pickupname\n");
+	}
 
 	weapon = WP_NONE;
 
@@ -1198,6 +1483,10 @@ AICast_ScriptAction_SelectWeapon
 qboolean AICast_ScriptAction_SelectWeapon( cast_state_t *cs, char *params ) {
 	int weapon;
 	int i;
+
+	if (!params || !params[0]) {
+		G_Error("AI Scripting: selectweapon requires pickupname\n");
+	}
 
 	weapon = WP_NONE;
 
@@ -1278,6 +1567,42 @@ qboolean AICast_ScriptAction_SetMoveSpeed( cast_state_t *cs, char *params ) {
 }
 
 
+/*
+==============
+AICast_ScriptAction_GiveScore
+	syntax: givescore <amount>
+
+==============
+*/
+qboolean AICast_ScriptAction_GiveScore( cast_state_t *cs, char *params ) {
+	if ( !params || !params[0] ) {
+		G_Error( "AI Scripting: setarmor requires an armor value" );
+	}
+
+	g_entities[cs->entityNum].client->ps.persistant[PERS_SCORE] += atoi( params );
+
+	return qtrue;
+}
+
+
+/*
+==============
+AICast_ScriptAction_SetWave
+	syntax: setwave <amount>
+
+==============
+*/
+qboolean AICast_ScriptAction_SetWave( cast_state_t *cs, char *params ) {
+	if ( !params || !params[0] ) {
+		G_Error( "AI Scripting: setwave requires an wave value" );
+	}
+
+	g_entities[cs->entityNum].client->ps.persistant[PERS_WAVES] = atoi( params );
+
+	return qtrue;
+}
+
+
 //----(SA)	added
 /*
 ==============
@@ -1309,6 +1634,10 @@ AICast_ScriptAction_GiveArmor
 qboolean AICast_ScriptAction_GiveArmor( cast_state_t *cs, char *params ) {
 	int i;
 	gitem_t     *item = 0;
+
+	if (!params || !params[0]) {
+		G_Error("AI Scripting: givearmor requires params\n");
+	}
 
 	for ( i = 1; bg_itemlist[i].classname; i++ ) {
 		//----(SA)	first try the name they see in the editor, then the pickup name
@@ -1348,6 +1677,10 @@ qboolean AICast_ScriptAction_GiveAmmo( cast_state_t *cs, char *params ) {
 	gitem_t     *item = 0;
 	int quantity;
 
+	if (!params || !params[0]) {
+		G_Error("AI Scripting: giveammo requires pickupname\n");
+	}
+
 	for ( i = 1; bg_itemlist[i].classname; i++ ) {
 		//----(SA)	first try the name they see in the editor, then the pickup name
 		if ( !Q_strcasecmp( params, bg_itemlist[i].classname ) ) {
@@ -1372,6 +1705,66 @@ qboolean AICast_ScriptAction_GiveAmmo( cast_state_t *cs, char *params ) {
 	return qtrue;
 }
 
+
+/*
+==============
+AICast_ScriptAction_IncreaseRespawns
+
+  syntax: increaserespawns <ainame> <amount>
+
+  Increases the respawnsleft value for the specified AI entity by the specified amount.
+==============
+*/
+qboolean AICast_ScriptAction_IncreaseRespawns(cast_state_t *cs, char *params) {
+    char *pString, *token;
+    char aiName[MAX_QPATH];
+    int amount;
+    gentity_t *targetEnt;
+    cast_state_t *targetCs;
+
+    // Parse the AI name
+    pString = params;
+    token = COM_ParseExt(&pString, qfalse);
+    if (!token[0]) {
+        G_Error("AI Scripting: increaserespawns requires an AI name and an amount\n");
+    }
+    Q_strncpyz(aiName, token, sizeof(aiName));
+
+    // Parse the amount
+    token = COM_ParseExt(&pString, qfalse);
+    if (!token[0]) {
+        G_Error("AI Scripting: increaserespawns requires an amount\n");
+    }
+    amount = atoi(token);
+
+    // Find the target entity by AI name
+    targetEnt = AICast_FindEntityForName(aiName);
+    if (!targetEnt || !targetEnt->client) {
+        G_Error("AI Scripting: increaserespawns could not find AI with name '%s'\n", aiName);
+    }
+
+    // Get the cast state of the target entity
+    targetCs = AICast_GetCastState(targetEnt->s.clientNum);
+    if (!targetCs) {
+        G_Error("AI Scripting: increaserespawns could not get cast state for AI '%s'\n", aiName);
+    }
+
+    // Increase the respawnsleft value
+    targetCs->respawnsleft += amount;
+
+    // Ensure respawnsleft does not go below 0
+    if (targetCs->respawnsleft < 0) {
+        targetCs->respawnsleft = 0;
+    }
+
+    // Optional: Print debug information
+    //G_Printf("AI '%s' respawnsleft increased by %d. New value: %d\n",
+           //  aiName, amount, targetCs->respawnsleft);
+
+    return qtrue;
+}
+
+
 /*
 ==============
 AICast_ScriptAction_GiveHealth
@@ -1383,6 +1776,10 @@ AICast_ScriptAction_GiveHealth
 qboolean AICast_ScriptAction_GiveHealth( cast_state_t *cs, char *params ) {
 	int i;
 	gitem_t     *item = 0;
+
+	if (!params || !params[0]) {
+		G_Error("AI Scripting: givehealth requires pickupname\n");
+	}
 
 	for ( i = 1; bg_itemlist[i].classname; i++ ) {
 		//----(SA)	first try the name they see in the editor, then the pickup name
@@ -1409,6 +1806,21 @@ qboolean AICast_ScriptAction_GiveHealth( cast_state_t *cs, char *params ) {
 
 }
 
+qboolean AICast_ScriptAction_ApplyLoadout( cast_state_t *cs, char *params ) {
+    gentity_t *player;
+
+    if ( !params || !params[0] ) {
+        G_Error( "AI Scripting: applyloadout requires loadout name\n" );
+    }
+
+    player = AICast_FindEntityForName( "player" );
+    if ( !player ) {
+        return qfalse;
+    }
+
+    return AICast_Loadouts_ApplyToEnt( cs, player, params );
+}
+
 /*
 =================
 AICast_ScriptAction_GiveWeapon
@@ -1420,6 +1832,11 @@ qboolean AICast_ScriptAction_GiveWeapon( cast_state_t *cs, char *params ) {
 	int weapon;
 	int i;
 	gentity_t   *ent = &g_entities[cs->entityNum];
+	int slotId = G_GetFreeWeaponSlot( ent );
+
+	if (!params || !params[0]) {
+		G_Error("AI Scripting: giveweapon requires pickupname\n");
+	}
 
 	weapon = WP_NONE;
 
@@ -1450,8 +1867,44 @@ qboolean AICast_ScriptAction_GiveWeapon( cast_state_t *cs, char *params ) {
 		}
 	}
 
+	if (!ent->aiCharacter)
+	{
+		if (g_newinventory.integer > 0 || g_gametype.integer == GT_SURVIVAL)
+		{
+			if (weapon != WP_KNIFE)
+			{
+				if (slotId < 0)
+				{
+					return qfalse;
+				}
+			}
+			else
+			{
+				slotId = 0;
+			}
+		}
+	}
+
 	if ( weapon != WP_NONE ) {
-		COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, weapon );
+		COM_BitSet(g_entities[cs->entityNum].client->ps.weapons, weapon);
+
+		if (!ent->aiCharacter)
+		{
+			if (g_newinventory.integer > 0 || g_gametype.integer == GT_SURVIVAL)
+			{
+				if (weapon != WP_AIRSTRIKE && weapon != WP_GRENADE_LAUNCHER && weapon != WP_GRENADE_PINEAPPLE && weapon != WP_ARTY && weapon != WP_POISONGAS && weapon != WP_DYNAMITE_ENG && weapon != WP_DYNAMITE && weapon != WP_SMOKE_BOMB && weapon != WP_M7) // Skip WP_AIRSTRIKE and WP_ARTY	
+				{
+					if (ent->client->ps.stats[STAT_PLAYER_CLASS] == PC_SOLDIER)
+					{
+						ent->client->ps.weaponSlotsSoldier[slotId] = weapon;
+					}
+					else
+					{
+						ent->client->ps.weaponSlots[slotId] = weapon;
+					}
+				}
+			}
+		}
 
 //----(SA)	some weapons always go together (and they share a clip, so this is okay)
 		if ( weapon == WP_GARAND ) {
@@ -1460,23 +1913,37 @@ qboolean AICast_ScriptAction_GiveWeapon( cast_state_t *cs, char *params ) {
 		if ( weapon == WP_SNOOPERSCOPE ) {
 			COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_GARAND );
 		}
-		if ( weapon == WP_FG42 ) {
-			COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_FG42SCOPE );
-		}
+        if ( weapon == WP_FG42 ) {
+         // Only grant FG42SCOPE if the entity is not an AI
+          if ( !ent->aiCharacter ) {
+            COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_FG42SCOPE );
+          }
+        }
 		if ( weapon == WP_SNIPERRIFLE ) {
 			COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_MAUSER );
+		}
+		if ( weapon == WP_M7 ) {
+			COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_M1GARAND );
+		}
+		if ( weapon == WP_M1GARAND ) {
+			COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_M7 );
 		}
 		if ( weapon == WP_DELISLESCOPE ) {
 			COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_DELISLE );
 		}
+        if ( weapon == WP_DELISLE ) {
+         // Only grant DELISLESCOPE if the entity is not an AI
+          if ( !ent->aiCharacter ) {
+            COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_DELISLESCOPE );
+          }
+        }
 		if ( weapon == WP_M1941SCOPE ) {
 			COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_M1941 );
 		}
 //----(SA)	end
 
 		// monsters have full ammo for their attacks
-		// knife gets infinite ammo too
-		if ( !Q_strncasecmp( params, "monsterattack", 13 ) || weapon == WP_DAGGER ) {
+		if ( !Q_strncasecmp( params, "monsterattack", 13 ) ) {
 			g_entities[cs->entityNum].client->ps.ammo[BG_FindAmmoForWeapon( weapon )] = 999;
 			Fill_Clip( &g_entities[cs->entityNum].client->ps, weapon );    
 		}
@@ -1486,7 +1953,7 @@ qboolean AICast_ScriptAction_GiveWeapon( cast_state_t *cs, char *params ) {
 		}
 
 		// conditional flags
-		if ( ent->aiCharacter == AICHAR_ZOMBIE ) {
+		if ( ent->aiCharacter == AICHAR_ZOMBIE || ent->aiCharacter == AICHAR_ZOMBIE_SURV || ent->aiCharacter == AICHAR_ZOMBIE_GHOST || ent->aiCharacter == AICHAR_ZOMBIE_FLAME ) {
 			if ( COM_BitCheck( ent->client->ps.weapons, WP_MONSTER_ATTACK1 ) ) {
 				cs->aiFlags |= AIFL_NO_FLAME_DAMAGE;
 				SET_FLAMING_ZOMBIE( ent->s, 1 );
@@ -1511,6 +1978,31 @@ qboolean AICast_ScriptAction_GiveWeaponFull( cast_state_t *cs, char *params ) {
 	int i;
 	gentity_t   *ent = &g_entities[cs->entityNum];
 
+	char localParams[256];
+    char *tokens[16];
+    int tCount = 0;
+    char *chosenParam;
+    char *token;
+
+	if (!params || !params[0]) {
+		G_Error("AI Scripting: giveweaponfull requires pickupname\n");
+	}
+
+	Q_strncpyz(localParams, params, sizeof(localParams));
+
+	token = strtok(localParams, " ");
+    while (token && tCount < 16)
+    {
+        tokens[tCount++] = token;
+        token = strtok(NULL, " ");
+    }
+
+    if (tCount > 1) {
+        chosenParam = tokens[rand() % tCount];
+	} else {
+        chosenParam = tokens[0];
+	}
+
 	int maxAmmo = sizeof(ammoTable) / sizeof(ammoTable[0]);
 	
 	weapon = WP_NONE;
@@ -1521,18 +2013,16 @@ qboolean AICast_ScriptAction_GiveWeaponFull( cast_state_t *cs, char *params ) {
 	memset( g_entities[cs->entityNum].client->ps.ammoclip, 0, sizeof( g_entities[cs->entityNum].client->ps.ammoclip ) );
 	cs->weaponNum = WP_NONE;
 
-	for ( i = 1; bg_itemlist[i].classname; i++ )
-	{
-		//----(SA)	first try the name they see in the editor, then the pickup name
-		if ( !Q_strcasecmp( params, bg_itemlist[i].classname ) ) {
-			weapon = bg_itemlist[i].giTag;
-			break;
-		}
-
-		if ( !Q_strcasecmp( params, bg_itemlist[i].pickup_name ) ) {
-			weapon = bg_itemlist[i].giTag;
-		}
-	}
+    for ( i = 1; bg_itemlist[i].classname; i++ )
+    {
+        if ( !Q_strcasecmp( chosenParam, bg_itemlist[i].classname ) ) {
+            weapon = bg_itemlist[i].giTag;
+            break;
+        }
+        if ( !Q_strcasecmp( chosenParam, bg_itemlist[i].pickup_name ) ) {
+            weapon = bg_itemlist[i].giTag;
+        }
+    }
 
     // Weapon randomizer
 
@@ -1543,7 +2033,7 @@ qboolean AICast_ScriptAction_GiveWeaponFull( cast_state_t *cs, char *params ) {
         
 		   // Find all weapons
            for (int i = 0; i < maxAmmo; i++) {
-                if (ammoTable[i].weaponClass != WEAPON_CLASS_UNUSED || ammoTable[i].weaponClass != WEAPON_CLASS_MELEE || ammoTable[i].weaponClass != WEAPON_CLASS_AKIMBO || ammoTable[i].weaponClass != WEAPON_CLASS_GRENADE )
+                if ( !( ammoTable[i].weaponClass & WEAPON_CLASS_UNUSED && ammoTable[i].weaponClass & WEAPON_CLASS_MELEE && ammoTable[i].weaponClass & WEAPON_CLASS_AKIMBO && ammoTable[i].weaponClass & WEAPON_CLASS_GRENADE ) )
 				{
                    wpnIndices[numWpns] = i;
                    numWpns++;
@@ -1565,8 +2055,7 @@ qboolean AICast_ScriptAction_GiveWeaponFull( cast_state_t *cs, char *params ) {
         
 		   // Find all pistols
            for (int i = 0; i < maxAmmo; i++) {
-                if (ammoTable[i].weaponClass == WEAPON_CLASS_PISTOL)
-				{
+                if ( ammoTable[i].weaponClass & WEAPON_CLASS_PISTOL ) {
                    pistolIndices[numPistols] = i;
                    numPistols++;
                 }
@@ -1588,8 +2077,7 @@ qboolean AICast_ScriptAction_GiveWeaponFull( cast_state_t *cs, char *params ) {
         
 		   // Find all SMGs
            for (int i = 0; i < maxAmmo; i++) {
-                if (ammoTable[i].weaponClass == WEAPON_CLASS_SMG)
-				{
+                if ( ammoTable[i].weaponClass & WEAPON_CLASS_SMG ) {
                    smgIndices[numSmgs] = i;
                    numSmgs++;
                 }
@@ -1610,8 +2098,7 @@ qboolean AICast_ScriptAction_GiveWeaponFull( cast_state_t *cs, char *params ) {
         
 		   // Find all Rifles
            for (int i = 0; i < maxAmmo; i++) {
-                if (ammoTable[i].weaponClass == WEAPON_CLASS_RIFLE || ammoTable[i].weaponClass == WEAPON_CLASS_ASSAULT_RIFLE)
-				{
+                if ( ammoTable[i].weaponClass & WEAPON_CLASS_RIFLE || ammoTable[i].weaponClass & WEAPON_CLASS_ASSAULT_RIFLE ) {
                    rifleIndices[numRifles] = i;
                    numRifles++;
                 }
@@ -1632,8 +2119,7 @@ qboolean AICast_ScriptAction_GiveWeaponFull( cast_state_t *cs, char *params ) {
         
 		   // Find all Heavy weapons
            for (int i = 0; i < maxAmmo; i++) {
-                if (ammoTable[i].weaponClass == WEAPON_CLASS_MG || ammoTable[i].weaponClass == WEAPON_CLASS_LAUNCHER || ammoTable[i].weaponClass == WEAPON_CLASS_BEAM || ammoTable[i].weaponClass == WEAPON_CLASS_SHOTGUN  )
-				{
+                if ( ammoTable[i].weaponClass & WEAPON_CLASS_MG || ammoTable[i].weaponClass & WEAPON_CLASS_LAUNCHER || ammoTable[i].weaponClass & WEAPON_CLASS_BEAM || ammoTable[i].weaponClass & WEAPON_CLASS_SHOTGUN ) {
                    heavyIndices[numHeavies] = i;
                    numHeavies++;
                 }
@@ -1654,8 +2140,7 @@ qboolean AICast_ScriptAction_GiveWeaponFull( cast_state_t *cs, char *params ) {
         
 		   // Find all Axis Weapons
            for (int i = 0; i < maxAmmo; i++) {
-                if ( (ammoTable[i].weaponTeam == WEAPON_TEAM_AXIS || ammoTable[i].weaponTeam == WEAPON_TEAM_COMMON) && ammoTable[i].weaponClass != WEAPON_CLASS_UNUSED && ammoTable[i].weaponClass != WEAPON_CLASS_GRENADE )
-				{
+                if ( ( ammoTable[i].weaponTeam == WEAPON_TEAM_AXIS || ammoTable[i].weaponTeam == WEAPON_TEAM_COMMON ) && !( ammoTable[i].weaponClass & WEAPON_CLASS_UNUSED ) && !( ammoTable[i].weaponClass & WEAPON_CLASS_GRENADE ) ) {
                    axisIndices[numAxis] = i;
                    numAxis++;
                 }
@@ -1676,8 +2161,7 @@ qboolean AICast_ScriptAction_GiveWeaponFull( cast_state_t *cs, char *params ) {
         
 		   // Find all Allied Weapons
            for (int i = 0; i < maxAmmo; i++) {
-                if ( (ammoTable[i].weaponTeam == WEAPON_TEAM_ALLIES || ammoTable[i].weaponTeam == WEAPON_TEAM_COMMON) && ammoTable[i].weaponClass != WEAPON_CLASS_UNUSED && ammoTable[i].weaponClass != WEAPON_CLASS_GRENADE )
-				{
+                if ( ( ammoTable[i].weaponTeam == WEAPON_TEAM_ALLIES || ammoTable[i].weaponTeam == WEAPON_TEAM_COMMON) && !( ammoTable[i].weaponClass & WEAPON_CLASS_UNUSED) && !( ammoTable[i].weaponClass & WEAPON_CLASS_GRENADE ) ) {
                    alliesIndices[numAllies] = i;
                    numAllies++;
                 }
@@ -1698,8 +2182,7 @@ if ( !Q_strcasecmp (params, "soviet_random") )
         
 		   // Find all Soviet Weapons
            for (int i = 0; i < maxAmmo; i++) {
-                if ( (ammoTable[i].weaponTeam == WEAPON_TEAM_SOVIET || ammoTable[i].weaponTeam == WEAPON_TEAM_COMMON) && ammoTable[i].weaponClass != WEAPON_CLASS_UNUSED && ammoTable[i].weaponClass != WEAPON_CLASS_GRENADE )
-				{
+                if ( ( ammoTable[i].weaponTeam == WEAPON_TEAM_SOVIET || ammoTable[i].weaponTeam == WEAPON_TEAM_COMMON) && !( ammoTable[i].weaponClass & WEAPON_CLASS_UNUSED ) && !( ammoTable[i].weaponClass & WEAPON_CLASS_GRENADE ) ) {
                    sovietIndices[numSoviet] = i;
                    numSoviet++;
                 }
@@ -1736,22 +2219,37 @@ if ( !Q_strcasecmp (params, "soviet_random") )
 		if ( weapon == WP_SNOOPERSCOPE ) {
 			COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_GARAND );
 		}
-		if ( weapon == WP_FG42 ) {
-			COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_FG42SCOPE );
-		}
+        if ( weapon == WP_FG42 ) {
+         // Only grant FG42SCOPE if the entity is not an AI
+          if ( !ent->aiCharacter ) {
+            COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_FG42SCOPE );
+          }
+        }
 		if ( weapon == WP_SNIPERRIFLE ) {
 			COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_MAUSER );
+		}
+		if ( weapon == WP_M7 ) {
+			COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_M1GARAND );
+		}
+		if ( weapon == WP_M1GARAND ) {
+			COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_M7 );
 		}
 		if ( weapon == WP_DELISLESCOPE ) {
 			COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_DELISLE );
 		}
+        if ( weapon == WP_DELISLE ) {
+         // Only grant DELISLESCOPE if the entity is not an AI
+          if ( !ent->aiCharacter ) {
+            COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_DELISLESCOPE );
+          }
+        }
 		if ( weapon == WP_M1941SCOPE ) {
 			COM_BitSet( g_entities[cs->entityNum].client->ps.weapons, WP_M1941 );
 		}
 //----(SA)	end
 
-        // giveweaponfull gives you max ammo and fills your clip for all weapons
-		g_entities[cs->entityNum].client->ps.ammo[BG_FindAmmoForWeapon( weapon )] = 999;
+		// giveweaponfull gives you max ammo and fills your clip for all weapons
+        g_entities[cs->entityNum].client->ps.ammo[BG_FindAmmoForWeapon( weapon )] = 999;
 		Fill_Clip( &g_entities[cs->entityNum].client->ps, weapon );
 		// and also selects this weapon
 		if ( cs->bs ) {
@@ -1767,7 +2265,7 @@ if ( !Q_strcasecmp (params, "soviet_random") )
 		}    
 		
 		// conditional flags
-		if ( ent->aiCharacter == AICHAR_ZOMBIE ) {
+		if ( ent->aiCharacter == AICHAR_ZOMBIE || ent->aiCharacter == AICHAR_ZOMBIE_SURV || ent->aiCharacter == AICHAR_ZOMBIE_GHOST || ent->aiCharacter == AICHAR_ZOMBIE_FLAME ) {
 			if ( COM_BitCheck( ent->client->ps.weapons, WP_MONSTER_ATTACK1 ) ) {
 				cs->aiFlags |= AIFL_NO_FLAME_DAMAGE;
 				SET_FLAMING_ZOMBIE( ent->s, 1 );
@@ -1790,6 +2288,10 @@ AICast_ScriptAction_TakeWeapon
 qboolean AICast_ScriptAction_TakeWeapon( cast_state_t *cs, char *params ) {
 	int weapon;
 	int i;
+
+	if (!params || !params[0]) {
+		G_Error("AI Scripting: takeweapon requires pickupname\n");
+	}
 
 	weapon = WP_NONE;
 
@@ -1872,6 +2374,74 @@ qboolean AICast_ScriptAction_TakeWeapon( cast_state_t *cs, char *params ) {
 		}
 	}
 
+	return qtrue;
+}
+
+
+/*
+==============
+AICast_ScriptAction_DropItem
+
+syntax:
+  dropitem <classnameOrPickupName>
+  dropitem <classnameOrPickupName> <lifetimeMs>
+  dropitem <classnameOrPickupName> <lifetimeMs> <dropChance>
+
+examples:
+  dropitem item_armor_head
+  dropitem weapon_mp40 30000
+  dropitem item_treasure 45000
+  dropitem weapon_colt 0 20
+==============
+*/
+qboolean AICast_ScriptAction_DropItem( cast_state_t *cs, char *params ) {
+	gentity_t *ent;
+	gitem_t *item;
+	char name[MAX_QPATH];
+	char lifeStr[32];
+	char probStr[4];
+	int lifetimeMs = 0;
+	int dropChance = 100;
+	int num;
+
+	if ( !cs ) {
+		return qfalse;
+	}
+
+	ent = &g_entities[cs->entityNum];
+	if ( !ent->inuse || !ent->client ) {
+		return qfalse;
+	}
+
+	// Parse: <name> [lifetimeMs] [dropChance]
+	name[0] = '\0';
+	lifeStr[0] = '\0';
+	probStr[0] = '\0';
+
+	num = sscanf( params, "%s %31s %3s", name, lifeStr, probStr );
+	if ( num < 1 || !name[0] ) {
+		G_Error( "AI Scripting: dropitem - missing item name" );
+		return qfalse;
+	}
+
+	if ( num == 2 && lifeStr[0] ) {
+		lifetimeMs = atoi( lifeStr );
+		if ( lifetimeMs < 0 ) lifetimeMs = 0;
+	}
+
+	if ( num >= 3 && probStr[0] ) {
+		dropChance = atoi( probStr );
+		if ( dropChance < 0 ) dropChance = 0;
+		if ( dropChance > 100 ) dropChance = 100;
+	}
+
+	item = BG_FindItem2( name );
+	if ( !item ) {
+		G_Error( "AI Scripting: dropitem %s, unknown item", name );
+		return qfalse;
+	}
+
+	G_DropSpecifiedItem( ent, item, lifetimeMs, dropChance );
 	return qtrue;
 }
 
@@ -1962,6 +2532,8 @@ qboolean AICast_ScriptAction_NoRespawn( cast_state_t *cs, char *params ) {
 /*
 ==============
 AICast_ScriptAction_GiveInventory
+
+ syntax: giveinventory <pickupname>
 ==============
 */
 qboolean AICast_ScriptAction_GiveInventory( cast_state_t *cs, char *params ) {
@@ -1997,6 +2569,48 @@ qboolean AICast_ScriptAction_GiveInventory( cast_state_t *cs, char *params ) {
 	return qtrue;
 }
 
+/*
+==============
+AICast_ScriptAction_GivePerk
+
+ syntax: giveperk <pickupname>
+==============
+*/
+qboolean AICast_ScriptAction_GivePerk( cast_state_t *cs, char *params ) {
+	int i;
+	gitem_t     *item = 0;
+
+	int clientNum;
+	clientNum = level.sortedClients[0];
+
+	if (!params || !params[0]) {
+		G_Error("AI Scripting: giveperk requires pickupname\n");
+	}
+
+	for ( i = 1; bg_itemlist[i].classname; i++ ) {
+		if ( !Q_strcasecmp( params, bg_itemlist[i].classname ) ) {
+			item = &bg_itemlist[i];
+		}
+
+		if ( !Q_strcasecmp( params, bg_itemlist[i].pickup_name ) ) {
+			item = &bg_itemlist[i];
+		}
+	}
+
+	if ( !item ) { // item not found
+		G_Error( "AI Scripting: giveperk %s, unknown item", params );
+	}
+
+     if ( item->giType == IT_PERK )  {
+		g_entities[cs->entityNum].client->ps.perks[item->giTag] += 1;   // add default of 1
+		g_entities[cs->entityNum].client->ps.stats[STAT_PERK] |= ( 1 << item->giTag );
+	}
+
+	ClientUserinfoChanged( clientNum );
+
+	return qtrue;
+}
+
 
 //----(SA)	end
 
@@ -2012,6 +2626,10 @@ AICast_ScriptAction_Movetype
 =================
 */
 qboolean AICast_ScriptAction_Movetype( cast_state_t *cs, char *params ) {
+	if (!params || !params[0]) {
+		G_Error("AI Scripting: movetype requires params\n");
+	}
+
 	if ( !Q_strcasecmp( params, "walk" ) ) {
 		cs->movestate = MS_WALK;
 		cs->movestateType = MSTYPE_PERMANENT;
@@ -2039,24 +2657,32 @@ qboolean AICast_ScriptAction_Movetype( cast_state_t *cs, char *params ) {
 
 /*
 =================
-AICast_ScriptAction_AlertEntity
+AICAction_AlertEntity
 
   syntax: alertentity <targetname>
+  Now NON-FATAL — prints warning once and continues
 =================
 */
 qboolean AICast_ScriptAction_AlertEntity( cast_state_t *cs, char *params ) {
 	gentity_t   *ent;
 
 	if ( !params || !params[0] ) {
-		G_Error( "AI Scripting: alertentity without targetname\n" );
+		G_Printf( S_COLOR_YELLOW "AI Scripting: alertentity without targetname (entity %d)\n", cs->entityNum );
+		return qfalse;
 	}
 
 	// find this targetname
 	ent = G_Find( NULL, FOFS( targetname ), params );
 	if ( !ent ) {
-		ent = G_Find( NULL, FOFS( aiName ), params ); // look for an AI
-		if ( !ent || !ent->client ) { // accept only AI for aiName check
-			G_Error( "AI Scripting: alertentity cannot find targetname \"%s\"\n", params );
+		ent = G_Find( NULL, FOFS( aiName ), params );
+		if ( !ent || !ent->client ) {
+			// Only warn ONCE per map to prevent spam
+			static char lastMissing[64] = {0};
+			if ( Q_strncmp( lastMissing, params, sizeof(lastMissing)-1 ) ) {
+				Q_strncpyz( lastMissing, params, sizeof(lastMissing) );
+				G_Printf( S_COLOR_YELLOW "AI Scripting: alertentity cannot find \"%s\"\n", params );
+			}
+			return qfalse;  // don't break the script chain
 		}
 	}
 
@@ -2067,15 +2693,19 @@ qboolean AICast_ScriptAction_AlertEntity( cast_state_t *cs, char *params ) {
 			return qtrue;
 		}
 
-		if ( aicast_debug.integer ) {
-			G_Printf( "AI Scripting: alertentity \"%s\" (classname = %s) doesn't have an \"AIScript_AlertEntity\" function\n", params, ent->classname );
+		// Only warn once per entity type
+		static char lastBad[128] = {0};
+		char temp[128];
+		Com_sprintf( temp, sizeof(temp), "%s:%s", params, ent->classname );
+		if ( Q_strncmp( lastBad, temp, sizeof(lastBad)-1 ) ) {
+			Q_strncpyz( lastBad, temp, sizeof(lastBad) );
+			G_Printf( S_COLOR_YELLOW "AI Scripting: alertentity \"%s\" (classname = %s) has no AlertEntity function\n",
+			          params, ent->classname );
 		}
-		//G_Error( "AI Scripting: alertentity \"%s\" (classname = %s) doesn't have an \"AIScript_AlertEntity\" function\n", params, ent->classname );
 		return qtrue;
 	}
 
 	ent->AIScript_AlertEntity( ent );
-
 	return qtrue;
 }
 
@@ -2138,7 +2768,7 @@ qboolean AICast_ScriptAction_SaveCheckpoint ( cast_state_t *cs, char *params ) {
 	saveName = COM_ParseExt( &pString, qfalse );
 	if ( !saveName[0] ) {
 		G_SaveGame( "lastcheckpoint" );	// save the default "current" savegame  
-		G_SaveGame( "current" );	   // save the default "current" savegame
+		G_SaveGame( "current_realrtcw" );	   // save the default "current" savegame
 	} else {
 		G_SaveGame( saveName );
 	}
@@ -2261,10 +2891,21 @@ qboolean AICast_ScriptAction_GodMode( cast_state_t *cs, char *params ) {
 	return qtrue;
 }
 
+/*
+=================
+AICast_ScriptAction_DropWeapon
+
+  syntax: drop_weapon <ainame>
+=================
+*/
 qboolean AICast_ScriptAction_DropWeapon(cast_state_t* cs, char* params) {
 	gentity_t* ent;
 	int weapon;
 	weapon = WP_NONE;
+
+	if (!params || !params[0]) {
+		G_Error("AI Scripting: drop_weapon requires a ainame\n");
+	}
 
 	// find the cast/player with the given "name"
 	ent = AICast_FindEntityForName(params);
@@ -2274,7 +2915,7 @@ qboolean AICast_ScriptAction_DropWeapon(cast_state_t* cs, char* params) {
 	}
 	weapon = cs->weaponNum;
 	if (weapon != WP_NONE) {
-		TossClientItems(ent);
+		TossClientWeapons( ent );
 		COM_BitClear(g_entities[cs->entityNum].client->ps.weapons, cs->weaponNum);
 		g_entities[cs->entityNum].client->ps.weapon = WP_NONE;
 	}
@@ -2388,6 +3029,52 @@ qboolean AICast_ScriptAction_ChangeAiName(cast_state_t* cs, char* params) {
 	g_entities[cs->entityNum].aiName = params;
 	AICast_ScriptParse(cs);
 	AICast_ScriptEvent(cs, "spawn", "");
+	return qtrue;
+}
+
+
+/*
+AICast_ScriptAction_ChangeAiSkin
+syntax: changeaiskin <skin path>
+*/
+qboolean AICast_ScriptAction_ChangeAiSkin(cast_state_t *cs, char *params)
+{
+	if (!params || !params[0]) {
+		G_Error("AI Scripting: changeaiskin requires a skin string for %s\n", g_entities[cs->entityNum].aiName);
+		return qtrue;
+	}
+
+	gentity_t *ent = &g_entities[cs->entityNum];
+
+	char userinfo[MAX_INFO_STRING];
+	trap_GetUserinfo(ent->s.number, userinfo, sizeof(userinfo));
+	Info_SetValueForKey(userinfo, "model", params);
+	trap_SetUserinfo(ent->s.number, userinfo);
+	ClientUserinfoChanged(ent->s.number);
+
+	return qtrue;
+}
+
+/*
+AICast_ScriptAction_ChangeAiHead
+syntax: changeaihead <headID>
+*/
+qboolean AICast_ScriptAction_ChangeAiHead(cast_state_t* cs, char* params)
+{
+	if (!params || !params[0]) {
+		G_Error("AI Scripting: changeaihead requires a head string for %s\n", g_entities[cs->entityNum].aiName);
+		return qtrue;
+	}
+
+	gentity_t* ent = &g_entities[cs->entityNum];
+
+	// Update userinfo
+	char userinfo[MAX_INFO_STRING];
+	trap_GetUserinfo(ent->s.number, userinfo, sizeof(userinfo));
+	Info_SetValueForKey(userinfo, "head", params);
+	trap_SetUserinfo(ent->s.number, userinfo);
+	ClientUserinfoChanged(ent->s.number);
+
 	return qtrue;
 }
 
@@ -2524,6 +3211,79 @@ qboolean AICast_ScriptAction_Accum( cast_state_t *cs, char *params ) {
 	}
 
 	return qtrue;
+}
+
+
+/*
+=================
+AICast_ScriptAction_Wave
+
+  syntax: wave <command> <parameter>
+
+  Commands (similar to accum):
+    wave abort_if_less_than <n>
+    wave abort_if_greater_than <n>
+    wave abort_if_not_equal <n>
+    wave abort_if_equal <n>
+    wave bitset <n>
+    wave bitreset <n>
+    wave abort_if_bitset <n>
+    wave abort_if_not_bitset <n>
+=================
+*/
+qboolean AICast_ScriptAction_Wave(cast_state_t *cs, char *params) {
+    char *pString, *token, lastToken[MAX_QPATH];
+    int value;
+
+    pString = params;
+
+    token = COM_ParseExt(&pString, qfalse);
+    if (!token[0]) {
+        G_Error("AI Scripting: wave without a command\n");
+    }
+
+    Q_strncpyz(lastToken, token, sizeof(lastToken));
+    token = COM_ParseExt(&pString, qfalse);
+
+    if (!token[0]) {
+        G_Error("AI Scripting: wave %s requires a parameter\n", lastToken);
+    }
+
+    value = atoi(token);
+
+    if (!Q_stricmp(lastToken, "abort_if_less_than")) {
+        if (svParams.waveCount < value) {
+            cs->castScriptStatus.castScriptStackHead = cs->castScriptEvents[cs->castScriptStatus.castScriptEventIndex].stack.numItems;
+        }
+    } else if (!Q_stricmp(lastToken, "abort_if_greater_than")) {
+        if (svParams.waveCount > value) {
+            cs->castScriptStatus.castScriptStackHead = cs->castScriptEvents[cs->castScriptStatus.castScriptEventIndex].stack.numItems;
+        }
+    } else if (!Q_stricmp(lastToken, "abort_if_not_equal")) {
+        if (svParams.waveCount != value) {
+            cs->castScriptStatus.castScriptStackHead = cs->castScriptEvents[cs->castScriptStatus.castScriptEventIndex].stack.numItems;
+        }
+    } else if (!Q_stricmp(lastToken, "abort_if_equal")) {
+        if (svParams.waveCount == value) {
+            cs->castScriptStatus.castScriptStackHead = cs->castScriptEvents[cs->castScriptStatus.castScriptEventIndex].stack.numItems;
+        }
+    } else if (!Q_stricmp(lastToken, "bitset")) {
+        svParams.waveCount |= (1 << value);
+    } else if (!Q_stricmp(lastToken, "bitreset")) {
+        svParams.waveCount &= ~(1 << value);
+    } else if (!Q_stricmp(lastToken, "abort_if_bitset")) {
+        if (svParams.waveCount & (1 << value)) {
+            cs->castScriptStatus.castScriptStackHead = cs->castScriptEvents[cs->castScriptStatus.castScriptEventIndex].stack.numItems;
+        }
+    } else if (!Q_stricmp(lastToken, "abort_if_not_bitset")) {
+        if (!(svParams.waveCount & (1 << value))) {
+            cs->castScriptStatus.castScriptStackHead = cs->castScriptEvents[cs->castScriptStatus.castScriptEventIndex].stack.numItems;
+        }
+    } else {
+        G_Error("AI Scripting: wave %s: unknown command\n", lastToken);
+    }
+
+    return qtrue;
 }
 
 /*
@@ -2771,217 +3531,10 @@ AICast_ScriptAction_PrintBonus
 qboolean AICast_ScriptAction_PrintBonus( cast_state_t *cs, char *params ) {
 	char *newstr;
 
-	newstr = va( "%s", params );
+	newstr = Q_strlwr( va( "%s", params ) );
 
-	trap_SendServerCommand( -1, "mu_play sound/misc/bonus.wav 0\n" );
-
-	if ( !Q_stricmp( newstr, "escape1" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_escape1" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "escape1_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_escape1_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "escape2" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_escape2" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "escape2_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_escape2_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "tram" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_tram" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "tram_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_tram_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "village1" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_village1" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "village1_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_village1_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "crypt1" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_crypt1" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "crypt1_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_crypt1_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "crypt2" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_crypt2" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "crypt2_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_crypt2_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "church" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_church" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "church_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_church_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "boss1" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_boss1" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "boss1_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_boss1_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "forest" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_forest" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "forest_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_forest_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "rocket" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_rocket" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "rocket_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_rocket_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "baseout" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_baseout" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "baseout_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_baseout_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "assault" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_assault" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "assault_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_assault_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "sfm" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_sfm" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "sfm_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_sfm_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "factory" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_factory" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "factory_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_factory_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "trainyard" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_trainyard" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "trainyard_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_trainyard_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "swf" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_swf" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "swf_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_swf_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "norway" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_norway" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "norway_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_norway_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "xlabs" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_xlabs" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "xlabs_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_xlabs_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "boss2" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_boss2" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "boss2_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_boss2_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "dam" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_dam" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "dam_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_dam_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "village2" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_village2" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "village2_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_village2_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "chateau" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_chateau" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "chateau_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_chateau_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "dark" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_dark" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "dark_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_dark_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "dig" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_dig" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "dig_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_dig_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "castle" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_castle" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "castle_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_castle_alt" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "end" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_end" ); 
-	}
-
-	if ( !Q_stricmp( newstr, "end_alt" ) ) { 
-	    trap_SendServerCommand( -1, "bcp bonus_end_alt" ); 
-	}
+	// generic passthrough - any printbonus <name> works, no per-map C code needed
+	trap_SendServerCommand( -1, va( "bcp bonus_%s", newstr ) );
 
 	return qtrue;
 }
@@ -3302,6 +3855,10 @@ AICast_ScriptAction_SavePersistant
 ====================
 */
 qboolean AICast_ScriptAction_SavePersistant( cast_state_t *cs, char *params ) {
+	if (!params || !params[0]) {
+		G_Error("AI Scripting: savepersistant requires next_mapname\n");
+	}
+
 	G_SavePersistant( params );
 	return qtrue;
 }
@@ -3326,21 +3883,129 @@ qboolean AICast_ScriptAction_Teleport( cast_state_t *cs, char *params ) {
 	return qtrue;
 }
 
-
-
-extern void G_EndGame( void );
+extern void G_ScheduleEndgame( int delay );
 
 /*
 ==============
 AICast_ScriptAction_EndGame
+
+ syntax: endgame
 ==============
 */
 qboolean AICast_ScriptAction_EndGame( cast_state_t *cs, char *params ) {
-	G_EndGame();
+	G_ScheduleEndgame( 100 );
 	return qtrue;
 }
 
 
+/*
+===================
+AICast_ScriptAction_Announce
+
+  syntax: wm_announce <"text to send to all clients">
+===================
+*/
+qboolean AICast_ScriptAction_Announce( gentity_t *ent, char *params ) {
+	char *pString, *token;
+
+	pString = params;
+	token = COM_Parse( &pString );
+	if ( !token[0] ) {
+		G_Error( "AI_ScriptAction_Announce: statement parameter required\n" );
+	}
+
+	trap_SendServerCommand( -1, va( "cp \"%s\"", token ) );
+
+	return qtrue;
+}
+
+static qboolean AICast_IsSafeTransitionToken( const char *s ) {
+	int i;
+	char c;
+
+	if ( !s || !s[0] ) {
+		return qfalse;
+	}
+
+	for ( i = 0; s[i]; i++ ) {
+		c = s[i];
+
+		if ( ( c >= 'a' && c <= 'z' ) ||
+			 ( c >= 'A' && c <= 'Z' ) ||
+			 ( c >= '0' && c <= '9' ) ||
+			 c == '_' || c == '-' || c == '/' ) {
+			continue;
+		}
+
+		return qfalse;
+	}
+
+	return qtrue;
+}
+
+qboolean AICast_ScriptAction_TransitiontoMod( cast_state_t *cs, char *params ) {
+	char *p1, *p2;
+	char fsGame[MAX_QPATH];
+	char mapName[MAX_QPATH];
+	gentity_t   *player;
+	int exitTime = 8000;
+
+	player = AICast_FindEntityForName( "player" );
+
+	p1 = params;
+	p2 = strchr( params, ' ' );
+
+	if ( !p2 ) {
+		G_Printf( "AI Scripting: transitiontomod requires <fs_game> <mapname>\n" );
+		return qfalse;
+	}
+
+	while ( *p2 == ' ' ) {
+		*p2++ = '\0';
+	}
+
+	if ( !*p1 || !*p2 ) {
+		G_Printf( "AI Scripting: transitiontomod requires <fs_game> <mapname>\n" );
+		return qfalse;
+	}
+
+	Q_strncpyz( fsGame, p1, sizeof( fsGame ) );
+	Q_strncpyz( mapName, p2, sizeof( mapName ) );
+
+	if ( !AICast_IsSafeTransitionToken( fsGame ) ) {
+		G_Printf( "AI Scripting: transitiontomod invalid fs_game '%s'\n", fsGame );
+		return qfalse;
+	}
+
+	if ( !AICast_IsSafeTransitionToken( mapName ) ) {
+		G_Printf( "AI Scripting: transitiontomod invalid map '%s'\n", mapName );
+		return qfalse;
+	}
+
+	// double check that player exists and is alive
+	if ( !player || player->health <= 0 ) {
+		return qtrue;
+	}
+
+	// don't process if already changing
+	if ( g_reloading.integer ) {
+		return qtrue;
+	}
+
+	trap_SendServerCommand( -1, "mu_play sound/music/l_complete_1.wav 0\n" );
+	trap_SetConfigstring( CS_MUSIC_QUEUE, "" );
+	trap_SetConfigstring( CS_SCREENFADE, va( "1 %i %i", level.time + 250, 750 + exitTime ) );
+	trap_SendServerCommand( -1, va( "snd_fade 0 %d", 1000 + exitTime ) );
+
+	level.reloadDelayTime = level.time + 1000 + exitTime;
+	trap_Cvar_Set( "g_reloading", va( "%d", RELOAD_NEXTMAP_WAITING ) );
+
+	Q_strncpyz( level.nextMap, mapName, sizeof( level.nextMap ) );
+	Q_strncpyz( level.nextFSGame, fsGame, sizeof( level.nextFSGame ) );
+	level.pendingFSGameChange = qtrue;
+
+	return qtrue;
+}
 
 
 /*
@@ -3358,96 +4023,121 @@ AICast_ScriptAction_ChangeLevel
 */
 qboolean AICast_ScriptAction_ChangeLevel( cast_state_t *cs, char *params ) {
 	int i;
-	char *pch, *pch2, *newstr;
+	char *pch, *pch2, *newstr, *scan;
 	gentity_t   *player;
 	//gentity_t *ent;
 	//int client;
 	player = AICast_FindEntityForName( "player" );
-	qboolean silent = qfalse, endgame = qfalse, savepersist = qfalse;
+	qboolean silent = qfalse, savepersist = qfalse, delayedEndgame = qfalse;
 	int exitTime = 8000;
 
-	//ent = &g_entities[client];
-
-	if (g_decaychallenge.integer){
-	player->health = 999;
+	if ( g_decaychallenge.integer ) {
+		player->health = 999;
 	}
-	/*char mapname[MAX_QPATH];
 
-	if ( Q_stricmp( mapname, "escape2"))
-	{
-    steamSetAchievement("ACH_TRAINING");
+	// Endmap bonuses for finding all secrets
+	if ( g_endmapbonus.integer && level.numSecrets > 0 ) {
+		if ( player->numSecretsFound == level.numSecrets ) {
+			trap_SendServerCommand( -1, "mu_play sound/misc/bonus.wav 0\n" );
+			AICast_ScriptEvent( AICast_GetCastState( player->s.number ), "trigger", "endmap_bonus" );
+		}
 	}
-	*/
 
 	player = AICast_FindEntityForName( "player" );
 	// double check that they are still alive
 	if ( player->health <= 0 ) {
 		return qtrue;   // get out of here
-
 	}
+
 	// don't process if already changing
-//	if(reloading)
 	if ( g_reloading.integer ) {
 		return qtrue;
 	}
 
-	// save persistent data if required
-	newstr = va( "%s", params );
-	pch = strstr( newstr, " persistent" ); // (SA) whoops, this was mis-spelled
-	if ( pch ) {
-		pch = strstr( newstr, " " );
-		*pch = '\0';
-		savepersist = qtrue;
-	}
+	// compatibility: bare "changelevel" with no params means delayed endgame,
+	// but still keep the old music/fade staging
+	if ( !params || !params[0] ) {
+		delayedEndgame = qtrue;
+		newstr = "";
+	} else {
+		// save persistent data if required
+		newstr = va( "%s", params );
+		while ( *newstr && *newstr <= ' ' ) {
+			newstr++;
+		}
+		pch = strstr( newstr, " persistent" ); // (SA) whoops, this was mis-spelled
+		if ( pch ) {
+			*pch = '\0';
+			savepersist = qtrue;
+		}
 
-	//
-	newstr = va( "%s", params );
-	pch = strstr( newstr, " silent" );
-	if ( pch ) {
-		pch = strstr( newstr, " " );
-		*pch = '\0';
-		silent = qtrue;
-	}
-
-	// make sure we strip any params after the mapname
-	newstr = va( "%s", params );
-	pch = strstr( newstr, " " );
-	if ( pch ) {
-		*( pch++ ) = '\0';
 		//
-		// see if there is a mission_level specified
-		pch2 = strstr( pch, " " );
-		if ( pch2 ) { // kill the space if exists
-			*pch2 = '\0';
+		newstr = va( "%s", params );
+		while ( *newstr && *newstr <= ' ' ) {
+			newstr++;
+		}
+		pch = strstr( newstr, " silent" );
+		if ( pch ) {
+			*pch = '\0';
+			silent = qtrue;
 		}
 
-		if ( atoi( pch ) ) { // there's a 'time' specified
-			exitTime = atoi( pch );
+		// make sure we strip any params after the mapname
+		newstr = va( "%s", params );
+		while ( *newstr && *newstr <= ' ' ) {
+			newstr++;
 		}
-	}
 
-	if ( !Q_stricmp( newstr, "gamefinished" ) ) { // 'gamefinished' is keyword for 'exit to credits'
-		endgame = qtrue;
-	}
+		if ( !newstr[0] || !Q_stricmp( newstr, "(null)" ) ) {
+			delayedEndgame = qtrue;
+			newstr = "";
+		} else {
+			scan = newstr;
+			while ( *scan && *scan > ' ' ) {
+				scan++;
+			}
+			if ( *scan ) {
+				*scan++ = '\0';
 
-	if ( !endgame ) {
+				while ( *scan && *scan <= ' ' ) {
+					scan++;
+				}
 
-		// check for missing objectives
-		for ( i = 0; i < level.numObjectives; i++ ) {
-			if ( !( player->missionObjectives & ( 1 << i ) ) ) {
-				trap_SendServerCommand( -1, "cp objectivesnotcomplete" );
-				return qtrue;
+				pch2 = scan;
+				while ( *pch2 && *pch2 > ' ' ) {
+					pch2++;
+				}
+				if ( *pch2 ) {
+					*pch2 = '\0';
+				}
+
+				if ( atoi( scan ) ) { // there's a 'time' specified
+					exitTime = atoi( scan );
+				}
 			}
 		}
+	}
 
-		if ( savepersist ) {
-			G_SavePersistant( newstr ); // save persistent data if required
+	if ( delayedEndgame ) {
+		// keep old bare-changelevel behavior timing: 1000 + exitTime
+	} else if ( !Q_stricmp( newstr, "gamefinished" ) ) {
+		G_ScheduleEndgame( 100 + exitTime );
+		return qtrue;
+	}
 
+	// check for missing objectives
+	for ( i = 0; i < level.numObjectives; i++ ) {
+		if ( !( player->missionObjectives & ( 1 << i ) ) ) {
+			trap_SendServerCommand( -1, "cp objectivesnotcomplete" );
+			return qtrue;
 		}
 	}
 
+	if ( savepersist && !delayedEndgame ) {
+		G_SavePersistant( newstr ); // save persistent data if required
+	}
 
-	if ( !silent && !endgame ) {
+	if ( !silent ) {
 		trap_SendServerCommand( -1, "mu_play sound/music/l_complete_1.wav 0\n" );   // play mission success music
 	}
 
@@ -3457,1675 +4147,49 @@ qboolean AICast_ScriptAction_ChangeLevel( cast_state_t *cs, char *params ) {
 
 	trap_SendServerCommand( -1, va( "snd_fade 0 %d", 1000 + exitTime ) ); //----(SA)	added
 
+	if ( delayedEndgame ) {
+		G_ScheduleEndgame( 1000 + exitTime );
+		return qtrue;
+	}
+
 	// load the next map, after a delay
 	level.reloadDelayTime = level.time + 1000 + exitTime;
 	trap_Cvar_Set( "g_reloading", va( "%d", RELOAD_NEXTMAP_WAITING ) );
 
-	if ( endgame ) {
-		trap_Cvar_Set( "g_reloading", va( "%d", RELOAD_ENDGAME ) );
-		return qtrue;
-	}
-
 	Q_strncpyz( level.nextMap, newstr, sizeof( level.nextMap ) );
 
-	//if (g_cheats.integer)
-	//	trap_SendConsoleCommand( EXEC_APPEND, va("spdevmap %s\n", newstr) );
-	//else
-	//	trap_SendConsoleCommand( EXEC_APPEND, va("spmap %s\n", newstr ) );
-
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_AchievementMap_W3D
-==================
-*/
-qboolean AICast_ScriptAction_AchievementMap_W3D( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_W3D_1");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_AchievementMap_W3DSEC
-==================
-*/
-qboolean AICast_ScriptAction_AchievementMap_W3DSEC( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_W3D_2");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_goldchest
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_goldchest( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_SECRET_CRYPT2");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_warcrime
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_warcrime( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_KILL_CIVILIAN");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_speedrun
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_speedrun( cast_state_t *cs, char *params ) {
-	gentity_t   *player;
-	int playtime = 0;
-	player = AICast_FindEntityForName( "player" );
-	
-	if ( player ) 
-	{
-	AICast_AgePlayTime( player->s.number );
-	playtime = AICast_PlayTime( player->s.number );
-	}
-
-    if ( playtime <= 90000 ) 
-	{
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_ESCAPE_SPEEDRUN");
-	}
-	}
-
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_training
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_training( cast_state_t *cs, char *params ) {
-    steamSetAchievement("ACH_TRAINING");
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_strangelove
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_strangelove( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MAGIC");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_rocketstealth
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_rocketstealth( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_ROCKET_STEALTH");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_crystal
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_crystal( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CRYSTALSKULL");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_stealth1
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_stealth1( cast_state_t *cs, char *params ) {
-	gentity_t   *player;
-	player = AICast_FindEntityForName( "player" );
-	int attempts = 0;
-
-	if ( player ) 
-	{
-	attempts = AICast_NumAttempts( player->s.number ) + 1;
-	}
-
-	if ( attempts <= 1 ) 
-	{
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_STEALTH_1");
-	}
-	}
-
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_stealth2
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_stealth2( cast_state_t *cs, char *params ) {
-	gentity_t   *player;
-	player = AICast_FindEntityForName( "player" );
-	int attempts = 0;
-
-	if ( player ) 
-	{
-	attempts = AICast_NumAttempts( player->s.number ) + 1;
-	}
-
-	if ( attempts <= 1 ) 
-	{
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_STEALTH_2");
-	}
-	}
-
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_chapter1
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_chapter1( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CHAPTER_1");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_chapter2
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_chapter2( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CHAPTER_2");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_chapter3
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_chapter3( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CHAPTER_3");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_chapter4
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_chapter4( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CHAPTER_4");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_chapter5
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_chapter5( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CHAPTER_5");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_chapter6
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_chapter6( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CHAPTER_6");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_chapter7
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_chapter7( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CHAPTER_7");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_chapter1_hard
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_chapter1_hard( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CHAPTER_1_HARD");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_chapter2_hard
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_chapter2_hard( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CHAPTER_2_HARD");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_chapter3_hard
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_chapter3_hard( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CHAPTER_3_HARD");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_chapter4_hard
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_chapter4_hard( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CHAPTER_4_HARD");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_chapter5_hard
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_chapter5_hard( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CHAPTER_5_HARD");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_chapter6_hard
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_chapter6_hard( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CHAPTER_6_HARD");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_chapter7_hard
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_chapter7_hard( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CHAPTER_7_HARD");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_boss1
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_boss1( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_BOSS1");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_boss2
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_boss2( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_BOSS2");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_boss3
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_boss3( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_BOSS3");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_curse
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_curse( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CURSE");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_stalingrad
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_stalingrad( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_STALINGRAD");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_timegate
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_timegate( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_TIMEGATE");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_pro51
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_pro51( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_PRO51");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_sf
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_sf( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_SF");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_ra
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_ra( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_RA");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_ic
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_ic( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_IC");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_capuzzo
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_capuzzo( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CAPUZZO");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_saucers
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_saucers( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_SAUCERS");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_arkot
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_arkot( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_ARKOT");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_darkm
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_darkm( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_DARKM");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_darkm_2
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_darkm_2( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_DARKM_2");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_dm2
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_dm2( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_DM2");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_dm2_2
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_dm2_2( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_DM2_2");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_dm2_3
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_dm2_3( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_DM2_3");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_dm2_4
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_dm2_4( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_DM2_4");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_tda_day
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_tda_day( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_TDA_DAY");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_tda_night
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_tda_night( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_TDA_NIGHT");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_tda_dark
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_tda_dark( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_TDA_DARK");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_tda_plus
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_tda_plus( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_TDA_PLUS");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_tda_arena
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_tda_arena( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_TDA_ARENA");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_lion
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_lion( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_LION");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_parkour
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_parkour( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_PARKOUR");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_manor1
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_manor1( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MANOR1");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_manor1_2
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_manor1_2( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MANOR1_2");
-	}
-	return qtrue;
-}
-
-
-/*
-==================
-AICast_ScriptAction_Achievement_walkinthepark
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_walkinthepark( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer && g_nohudchallenge.integer && !g_nopickupchallenge.integer && !g_ironchallenge.integer)
-	{
-    steamSetAchievement("ACH_WALKINTHEPARK");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_ironman
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_ironman( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer && g_ironchallenge.integer && !g_nohudchallenge.integer && !g_nopickupchallenge.integer)
-	{
-    steamSetAchievement("ACH_IRONMAN");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_hardcore
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_hardcore( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer && g_nopickupchallenge.integer && !g_nohudchallenge.integer && !g_ironchallenge.integer)
-	{
-    steamSetAchievement("ACH_HARDCORE");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_999
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_999( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer && g_decaychallenge.integer)
-	{
-    steamSetAchievement("ACH_999");
-	}
-	return qtrue;
-}
-
-
-/*
-==================
-AICast_ScriptAction_Achievement_nightmare
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_nightmare( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer && g_nohudchallenge.integer && g_nopickupchallenge.integer && g_ironchallenge.integer)
-	{
-    steamSetAchievement("ACH_NIGHTMARE");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_booze
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_booze( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_WINTERSTEIN_WINE");
-	}
 	return qtrue;
 }
 
+qboolean AICast_ScriptAction_AchievementGeneric( cast_state_t *cs, char *params )
+{
+    const cast_script_stack_action_t *a;
+    const cast_achievementDef_t *def;
 
-/*
-==================
-AICast_ScriptAction_Achievement_party
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_party( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_WINTERSTEIN_PARTY");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_winterstein
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_winterstein( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_WINTERSTEIN_COMPLETE");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_speedrun_norway
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_speedrun_norway( cast_state_t *cs, char *params ) {
-	gentity_t   *player;
-	int playtime = 0;
-	player = AICast_FindEntityForName( "player" );
-	
-	if ( player ) 
-	{
-	AICast_AgePlayTime( player->s.number );
-	playtime = AICast_PlayTime( player->s.number );
-	}
-
-    if ( playtime <= 90000)
-	{
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_WINTERSTEIN_NORWAY");
-	}
-	}
-
-	return qtrue;
-}
-
-
-/*
-==================
-AICast_ScriptAction_AchievementMap_SIWA
-==================
-*/
-qboolean AICast_ScriptAction_AchievementMap_SIWA( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_SIWA");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_AchievementMap_SEAWALL
-==================
-*/
-qboolean AICast_ScriptAction_AchievementMap_SEAWALL( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_SEAWALL");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_GOLDRUSH
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_GOLDRUSH( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_GOLDRUSH");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_RADAR
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_RADAR( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_RADAR");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_RAILGUN
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_RAILGUN( cast_state_t *cs, char *params ) {
-    steamSetAchievement("ACH_RAILGUN");
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_FUEL
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_FUEL( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_FUEL");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_ALLGOLDSIWA
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_ALLGOLDSIWA( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_ALLGOLDSIWA");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_CHESTSIWA
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_CHESTSIWA( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_CHESTSIWA");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_FUEL1
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_FUEL1( cast_state_t *cs, char *params ) {
-	gentity_t   *player;
-	player = AICast_FindEntityForName( "player" );
-	int attempts = 0;
-
-	if ( player ) 
-	{
-	attempts = AICast_NumAttempts( player->s.number ) + 1;
-	}
-
-	if ( attempts <= 1 ) 
-	{
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_FUEL1");
-	}
-	}
-
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_SPEEDBATTERY
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_SPEEDBATTERY( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_SPEEDBATTERY");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_ROOMBATTERY
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_ROOMBATTERY( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_ROOMBATTERY");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_SAFE
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_SAFE( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_SAFE");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_HEIST
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_HEIST( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_HEIST");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_KELLYS
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_KELLYS( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_KELLYS");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_MANSIONGOLD
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_MANSIONGOLD( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MANSIONGOLD");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_PANTHER
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_PANTHER( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_PANTHER");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_DEPOT
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_DEPOT( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_DEPOT");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_DORA
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_DORA( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_DORA");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_ALLGOLDFUEL
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_ALLGOLDFUEL( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_ALLGOLDFUEL");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_ETBONUS
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_ETBONUS( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer && (g_decaychallenge.integer || g_ironchallenge.integer || g_nohudchallenge.integer || g_nopickupchallenge.integer ))
-	{
-    steamSetAchievement("ACH_ETBONUS");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_BINOCS
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_BINOCS( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_BINOCS");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA1_1
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA1_1( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA1_1");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA1_2
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA1_2( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA1_2");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA1_3
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA1_3( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA1_3");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA1_4
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA1_4( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA1_4");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA1_5
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA1_5( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA1_5");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA1_6
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA1_6( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA1_6");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA1_7
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA1_7( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA1_7");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA1_8
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA1_8( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA1_8");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA1_9
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA1_9( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA1_9");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA1_10
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA1_10( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA1_10");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA1_11
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA1_11( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA1_11");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA2_1
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA2_1( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA2_1");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA2_2
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA2_2( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA2_2");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA2_3
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA2_3( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA2_3");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA2_4
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA2_4( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA2_4");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA2_5
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA2_5( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA2_5");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA2_6
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA2_6( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA2_6");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA2_7
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA2_7( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA2_7");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA2_8
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA2_8( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA2_8");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_VENDETTA2_9
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_VENDETTA2_9( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_VENDETTA2_9");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_WARBELL1
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_WARBELL1( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_WARBELL_MAP");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_WARBELL2
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_WARBELL2( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_WARBELL_WATERS");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_WARBELL3
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_WARBELL3( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_WARBELL_BLAV");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_WARBELL4
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_WARBELL4( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_WARBELL_OLARIC");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_WARBELL5
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_WARBELL5( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_WARBELL_HEIN");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_MALTA_NIGHTMARE
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_MALTA_NIGHTMARE( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MALTA_NIGHTMARE");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_MALTA_LEAP
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_MALTA_LEAP( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MALTA_LEAP");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_MALTA_OSA
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_MALTA_OSA( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MALTA_OSA");
-	}
-	return qtrue;
-}
-
-
-/*
-==================
-AICast_ScriptAction_Achievement_MALTA_GOAT
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_MALTA_GOAT( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MALTA_GOAT");
-	}
-	return qtrue;
-}
+    if ( !cs ) {
+        return qtrue;
+    }
 
-/*
-==================
-AICast_ScriptAction_Achievement_MALTA_COURSE
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_MALTA_COURSE( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MALTA_COURSE");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_MALTA_RADIO
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_MALTA_RADIO( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MALTA_RADIO");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_MALTA_EGYPT
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_MALTA_EGYPT( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MALTA_EGYPT");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_MALTA_WIDE
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_MALTA_WIDE( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MALTA_WIDE");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_MALTA_FIREFLY
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_MALTA_FIREFLY( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MALTA_FIREFLY");
-	}
-	return qtrue;
-}
-
-/*
-==================
-AICast_ScriptAction_Achievement_MALTA_LAIR
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_MALTA_LAIR( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MALTA_LAIR");
-	}
-	return qtrue;
-}
+    a = cs->castScriptStatus.currentAction;
+    if ( !a ) {
+        return qtrue;
+    }
 
-/*
-==================
-AICast_ScriptAction_Achievement_MALTA_HIDEOUT
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_MALTA_HIDEOUT( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MALTA_HIDEOUT");
-	}
-	return qtrue;
-}
+    def = (const cast_achievementDef_t *)a->userdata;
+    if ( !def || !def->steamId || !def->steamId[0] ) {
+        return qtrue;
+    }
 
-/*
-==================
-AICast_ScriptAction_Achievement_MALTA_BARTENDER
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_MALTA_BARTENDER( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MALTA_BARTENDER");
-	}
-	return qtrue;
-}
+    if ( g_cheats.integer ) {
+        return qtrue;
+    }
 
-/*
-==================
-AICast_ScriptAction_Achievement_MALTA_BETRAYER
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_MALTA_BETRAYER( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MALTA_BETRAYER");
-	}
-	return qtrue;
-}
+    if ( def->canAward && !def->canAward( cs ) ) {
+        return qtrue;
+    }
 
-/*
-==================
-AICast_ScriptAction_Achievement_MALTA_AGENT2
-==================
-*/
-qboolean AICast_ScriptAction_Achievement_MALTA_AGENT2( cast_state_t *cs, char *params ) {
-	if ( !g_cheats.integer ) 
-	{
-    steamSetAchievement("ACH_MALTA_AGENT2");
-	}
-	return qtrue;
+    steamSetAchievement( def->steamId );
+    return qtrue;
 }
 
 /*
@@ -5248,14 +4312,28 @@ qboolean AICast_ScriptAction_DenyAction( cast_state_t *cs, char *params ) {
 /*
 =================
 AICast_ScriptAction_LightningDamage
+
+    syntax: lightningdamage <ON/OFF>
+
+  Note: this will change AIFL_ROLL_ANIM flag
 =================
 */
 qboolean AICast_ScriptAction_LightningDamage( cast_state_t *cs, char *params ) {
-	Q_strlwr( params );
-	if ( !Q_stricmp( params, "on" ) ) {
+	char    *pString, *token;
+
+	pString = params;
+	token = COM_ParseExt( &pString, qfalse );
+	if ( !token[0] ) {
+		G_Error( "AI_Scripting: syntax: lightningdamage <ON/OFF>" );
+	}
+	Q_strlwr( token );
+
+	if ( !Q_stricmp( token, "on" ) ) {
 		cs->aiFlags |= AIFL_ROLL_ANIM;  // hijacking this since the player doesn't use it
-	} else {
+	} else if ( !Q_stricmp( token, "off" ) ) {
 		cs->aiFlags &= ~AIFL_ROLL_ANIM;
+	} else {
+		G_Error( "AI_Scripting: syntax: lightningdamage <ON/OFF>" );
 	}
 	return qtrue;
 }
@@ -5263,6 +4341,8 @@ qboolean AICast_ScriptAction_LightningDamage( cast_state_t *cs, char *params ) {
 /*
 =================
 AICast_ScriptAction_Headlook
+
+  syntax: headlook <on/off>
 =================
 */
 qboolean AICast_ScriptAction_Headlook( cast_state_t *cs, char *params ) {
@@ -5326,10 +4406,15 @@ qboolean AICast_ScriptAction_RestoreScript( cast_state_t *cs, char *params ) {
 =================
 AICast_ScriptAction_StateType
 
+    syntax: statetype <alert/relaxed>
+
   set the current state for this character
 =================
 */
 qboolean AICast_ScriptAction_StateType( cast_state_t *cs, char *params ) {
+	if (!params || !params[0]) {
+		G_Error("AI_Scripting: syntax: statetype <alert/relaxed>\n");
+	}
 
 	if ( !Q_stricmp( params, "alert" ) ) {
 		cs->aiState = AISTATE_ALERT;
@@ -5344,7 +4429,7 @@ qboolean AICast_ScriptAction_StateType( cast_state_t *cs, char *params ) {
 ================
 AICast_ScriptAction_KnockBack
 
-  syntax: knockback [ON/OFF]
+  syntax: knockback <ON/OFF>
 ================
 */
 qboolean AICast_ScriptAction_KnockBack( cast_state_t *cs, char *params ) {
@@ -5374,7 +4459,7 @@ qboolean AICast_ScriptAction_KnockBack( cast_state_t *cs, char *params ) {
 ================
 AICast_ScriptAction_Zoom
 
-  syntax: zoom [ON/OFF]
+  syntax: zoom <ON/OFF>
 ================
 */
 qboolean AICast_ScriptAction_Zoom( cast_state_t *cs, char *params ) {
@@ -5449,6 +4534,13 @@ qboolean AICast_ScriptAction_StopCam( cast_state_t *cs, char *params ) {
 	return qtrue;
 }
 
+/*
+=================
+AICast_ScriptAction_Cigarette
+
+  syntax: cigarette <ON/OFF>
+=================
+*/
 qboolean AICast_ScriptAction_Cigarette( cast_state_t *cs, char *params ) {
 	char    *pString, *token;
 
@@ -5475,7 +4567,7 @@ qboolean AICast_ScriptAction_Cigarette( cast_state_t *cs, char *params ) {
 =================
 AICast_ScriptAction_Parachute
 
-  syntax: parachute [ON/OFF]
+  syntax: parachute <ON/OFF>
 =================
 */
 qboolean AICast_ScriptAction_Parachute( cast_state_t *cs, char *params ) {
@@ -5528,6 +4620,8 @@ qboolean AICast_ScriptAction_AIScriptName( cast_state_t *cs, char *params ) {
 /*
 =================
 AICast_ScriptAction_SetHealth
+
+  syntax: sethealth <value>
 =================
 */
 qboolean AICast_ScriptAction_SetHealth( cast_state_t *cs, char *params ) {
@@ -5545,7 +4639,7 @@ qboolean AICast_ScriptAction_SetHealth( cast_state_t *cs, char *params ) {
 =================
 AICast_ScriptAction_NoTarget
 
-  syntax: notarget ON/OFF
+  syntax: notarget <ON/OFF>
 =================
 */
 qboolean AICast_ScriptAction_NoTarget( cast_state_t *cs, char *params ) {
@@ -5567,6 +4661,8 @@ qboolean AICast_ScriptAction_NoTarget( cast_state_t *cs, char *params ) {
 /*
 ==================
 AICast_ScriptAction_Cvar
+
+  syntax: cvar <cvarName> <cvarValue>
 ==================
 */
 qboolean AICast_ScriptAction_Cvar( cast_state_t *cs, char *params ) {
@@ -5599,10 +4695,36 @@ qboolean AICast_ScriptAction_Cvar( cast_state_t *cs, char *params ) {
 
 /*
 ==================
+AICast_ScriptAction_CinPlay
+
+  syntax: cin_play <videoFileName>
+==================
+*/
+qboolean AICast_ScriptAction_CinPlay( cast_state_t *cs, char *params ) {
+	if ( !params || !params[0] ) {
+		G_Error( "AI_Scripting: syntax: cin_play <videoFileName>\n" );
+	}
+	trap_SendServerCommand( cs->entityNum, va( "cin_play %s", params ) );
+    return qtrue;
+}
+
+/*
+==================
+AICast_ScriptAction_CinStop
+
+  syntax: cin_stop
+==================
+*/
+qboolean AICast_ScriptAction_CinStop( cast_state_t *cs, char *params ) {
+    trap_SendServerCommand( cs->entityNum, "cin_stop" );
+    return qtrue;
+}
+
+/*
+==================
 AICast_ScriptAction_decoy
 ==================
 */
-
 qboolean AICast_ScriptAction_decoy( cast_state_t *cs, char *params ) {
     trap_SendServerCommand( -1, "mu_play sound/scenaric/general/decoy.wav 0\n" );
 	return qtrue;
@@ -5613,6 +4735,7 @@ qboolean AICast_ScriptAction_decoy( cast_state_t *cs, char *params ) {
 ==================
 AICast_ScriptAction_MusicStart
 
+  syntax: mu_start <musicfile> <fadeuptime>
 ==================
 */
 qboolean AICast_ScriptAction_MusicStart( cast_state_t *cs, char *params ) {
@@ -5641,6 +4764,7 @@ qboolean AICast_ScriptAction_MusicStart( cast_state_t *cs, char *params ) {
 ==================
 AICast_ScriptAction_MusicPlay
 
+  syntax: mu_play <musicfile> [fadeup time]
 ==================
 */
 qboolean AICast_ScriptAction_MusicPlay( cast_state_t *cs, char *params ) {
@@ -5664,6 +4788,8 @@ qboolean AICast_ScriptAction_MusicPlay( cast_state_t *cs, char *params ) {
 /*
 ==================
 AICast_ScriptAction_MusicStop
+
+  syntax: mu_stop [fadeout time]
 ==================
 */
 qboolean AICast_ScriptAction_MusicStop( cast_state_t *cs, char *params ) {
@@ -5685,6 +4811,8 @@ qboolean AICast_ScriptAction_MusicStop( cast_state_t *cs, char *params ) {
 /*
 ==================
 AICast_ScriptAction_MusicFade
+
+  syntax: mu_fade <targetvol> <fadetime>
 ==================
 */
 qboolean AICast_ScriptAction_MusicFade( cast_state_t *cs, char *params ) {
@@ -5714,22 +4842,40 @@ qboolean AICast_ScriptAction_MusicFade( cast_state_t *cs, char *params ) {
 /*
 ==================
 AICast_ScriptAction_MusicQueue
+
+  syntax: mu_queue <musicfile> [musicfile2] ...
 ==================
 */
 qboolean AICast_ScriptAction_MusicQueue( cast_state_t *cs, char *params ) {
-	char    *pString, *token;
-	char cvarName[MAX_QPATH];
+    char *pString, *token;
+    char cvarNameArray[16][MAX_INFO_STRING];
+    int fileCount = 0;
 
-	pString = params;
-	token = COM_ParseExt( &pString, qfalse );
-	if ( !token[0] ) {
-		G_Error( "AI_Scripting: syntax: mu_queue <musicfile>" );
-	}
-	Q_strncpyz( cvarName, token, sizeof( cvarName ) );
+    pString = params;
+    while (1) {
+        token = COM_ParseExt(&pString, qfalse);
+        if (!token[0]) {
+            break;
+        }
+        Q_strncpyz(cvarNameArray[fileCount], token, sizeof(cvarNameArray[fileCount]));
+        fileCount++;
+        if (fileCount >= 16) {
+            break;
+        }
+    }
 
-	trap_SetConfigstring( CS_MUSIC_QUEUE, cvarName );
+    if (fileCount == 0) {
+        G_Error("AI_Scripting: syntax: mu_queue <musicfile> [musicfile2] ...");
+    }
 
-	return qtrue;
+    if (fileCount == 1) {
+        trap_SetConfigstring(CS_MUSIC_QUEUE, cvarNameArray[0]);
+    } else {
+        int randomIndex = rand() % fileCount;
+        trap_SetConfigstring(CS_MUSIC_QUEUE, cvarNameArray[randomIndex]);
+    }
+
+    return qtrue;
 }
 
 
@@ -5888,6 +5034,8 @@ qboolean AICast_ScriptAction_PushAway( cast_state_t *cs, char *params ) {
 /*
 ==================
 AICast_ScriptAction_CatchFire
+
+  syntax: catchfire
 ==================
 */
 qboolean AICast_ScriptAction_CatchFire( cast_state_t *cs, char *params ) {

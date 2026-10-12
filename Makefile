@@ -29,11 +29,24 @@ endif
 ifndef BUILD_BASEGAME
   BUILD_BASEGAME =
 endif
-ifndef BUILD_RENDERER_REND2
-  BUILD_RENDERER_REND2 =
-endif
 ifndef BUILD_ARCHIVE
   BUILD_ARCHIVE = 0
+endif
+ifndef BUILD_BSPC
+  BUILD_BSPC = 0
+endif
+ifndef ONLY_BSPC
+  ONLY_BSPC = 0
+endif
+
+ifneq ($(ONLY_BSPC),0)
+  BUILD_STANDALONE = 0
+  BUILD_CLIENT = 0
+  BUILD_SERVER = 0
+  BUILD_GAME_SO = 0
+  BUILD_GAME_QVM = 0
+  BUILD_BASEGAME = 0
+  BUILD_BSPC = 0
 endif
 
 #############################################################################
@@ -119,7 +132,7 @@ endif
 export CROSS_COMPILING
 
 ifndef VERSION
-VERSION=4.0
+VERSION=5.4
 endif
 
 ifndef CLIENTBIN
@@ -127,6 +140,14 @@ ifndef CLIENTBIN
     CLIENTBIN=RealRTCW
   else
     CLIENTBIN=RealRTCW
+  endif
+endif
+
+ifndef BSPCBIN
+ ifdef MINGW
+    BSPCBIN=bspc
+  else
+    BSPCBIN=bspc
   endif
 endif
 
@@ -191,7 +212,7 @@ ifndef USE_CURL_DLOPEN
 endif
 
 ifndef USE_CODEC_VORBIS
-USE_CODEC_VORBIS=0
+USE_CODEC_VORBIS=1
 endif
 
 ifndef USE_CODEC_OPUS
@@ -270,17 +291,23 @@ ifndef USE_AUTHORIZE_SERVER
 USE_AUTHORIZE_SERVER=0
 endif
 
+# Build flavor (steam / nosteam) affects output folder
+ifeq ($(STEAM),1)
+  BUILD_FLAVOR=steam
+else
+  BUILD_FLAVOR=nosteam
+endif
+
 
 #############################################################################
 
-BD=$(BUILD_DIR)/debug-$(PLATFORM)-$(ARCH)
-BR=$(BUILD_DIR)/release-$(PLATFORM)-$(ARCH)
+BD=$(BUILD_DIR)/debug-$(PLATFORM)-$(ARCH)-$(BUILD_FLAVOR)
+BR=$(BUILD_DIR)/release-$(PLATFORM)-$(ARCH)-$(BUILD_FLAVOR)
 STEAMDIR=$(MOUNT_DIR)/steam
 STEAMSHIMDIR=$(MOUNT_DIR)/steamshim
 CDIR=$(MOUNT_DIR)/client
 SDIR=$(MOUNT_DIR)/server
 RDIR=$(MOUNT_DIR)/renderer
-R2DIR=$(MOUNT_DIR)/rend2
 CMDIR=$(MOUNT_DIR)/qcommon
 SDLDIR=$(MOUNT_DIR)/sdl
 ASMDIR=$(MOUNT_DIR)/asm
@@ -304,8 +331,11 @@ LBURGDIR=$(MOUNT_DIR)/tools/lcc/lburg
 Q3CPPDIR=$(MOUNT_DIR)/tools/lcc/cpp
 Q3LCCETCDIR=$(MOUNT_DIR)/tools/lcc/etc
 Q3LCCSRCDIR=$(MOUNT_DIR)/tools/lcc/src
-SDLHDIR=$(MOUNT_DIR)/SDL2
+SDLHDIR=$(MOUNT_DIR)/SDL3
 LIBSDIR=$(MOUNT_DIR)/libs
+BSPCDIR=$(MOUNT_DIR)/../sdk/rtcw-bspc-custom/src/bspc
+BSPCBLIBDIR=$(MOUNT_DIR)/../sdk/rtcw-bspc-custom/src/botlib
+BSPCCMDIR=$(MOUNT_DIR)/../sdk/rtcw-bspc-custom/src/qcommon
 
 bin_path=$(shell which $(1) 2> /dev/null)
 
@@ -331,20 +361,14 @@ ifneq ($(BUILD_CLIENT),0)
     CURL_LIBS ?= $(shell $(PKG_CONFIG) --silence-errors --libs libcurl)
     OPENAL_CFLAGS ?= $(shell $(PKG_CONFIG) --silence-errors --cflags openal)
     OPENAL_LIBS ?= $(shell $(PKG_CONFIG) --silence-errors --libs openal)
-    SDL_CFLAGS ?= $(shell $(PKG_CONFIG) --silence-errors --cflags sdl2|sed 's/-Dmain=SDL_main//')
-    SDL_LIBS ?= $(shell $(PKG_CONFIG) --silence-errors --libs sdl2)
+    SDL_CFLAGS ?= $(shell $(PKG_CONFIG) --silence-errors --cflags sdl3)
+    SDL_LIBS ?= $(shell $(PKG_CONFIG) --silence-errors --libs sdl3)
   else
     # assume they're in the system default paths (no -I or -L needed)
     CURL_LIBS ?= -lcurl
     OPENAL_LIBS ?= -lopenal
   endif
-  # Use sdl2-config if all else fails
-  ifeq ($(SDL_CFLAGS),)
-    ifneq ($(call bin_path, sdl2-config),)
-      SDL_CFLAGS = $(shell sdl2-config --cflags)
-      SDL_LIBS = $(shell sdl2-config --libs)
-    endif
-  endif
+
 endif
 
 # Add git version info
@@ -417,6 +441,12 @@ ifneq (,$(findstring "$(PLATFORM)", "linux" "gnu_kfreebsd" "kfreebsd-gnu" "gnu")
   THREAD_LIBS=-lpthread
   LIBS=-ldl -lm
 
+  FFMPEG_CFLAGS := $(shell pkg-config --cflags libavcodec libavformat libavutil libswscale libswresample)
+  FFMPEG_LIBS   := $(shell pkg-config --libs   libavcodec libavformat libavutil libswscale libswresample)
+
+  CFLAGS = $(FFMPEG_CFLAGS)
+  LIBS  += $(FFMPEG_LIBS)
+
   ifeq ($(USE_LOCAL_HEADERS),1)
     CLIENT_CFLAGS += -I$(SDLHDIR)/include
   endif
@@ -435,7 +465,6 @@ ifneq (,$(findstring "$(PLATFORM)", "linux" "gnu_kfreebsd" "kfreebsd-gnu" "gnu")
   endif
 
   ifeq ($(USE_OPENGLES),1)
-    BUILD_RENDERER_REND2 = 0
     BASE_CFLAGS += -DUSE_OPENGLES
     CLIENT_LIBS = $(SDL_LIBS)
     RENDERER_LIBS = $(SDL_LIBS)
@@ -475,6 +504,12 @@ ifeq ($(PLATFORM),darwin)
   CLIENT_LIBS=
   RENDERER_LIBS=
   OPTIMIZEVM = -O3
+
+  # FFmpeg (Homebrew) for cinematic playback in cl_cin.c
+  FFMPEG_CFLAGS := $(shell PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig pkg-config --cflags libavcodec libavformat libavutil libswscale libswresample)
+  FFMPEG_LIBS   := $(shell PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig pkg-config --libs   libavcodec libavformat libavutil libswscale libswresample)
+  CFLAGS  += $(FFMPEG_CFLAGS)
+  CLIENT_LIBS += $(FFMPEG_LIBS)
 
   # Default minimum Mac OS X version
   ifeq ($(MACOSX_VERSION_MIN),)
@@ -702,13 +737,13 @@ ifdef MINGW
   endif
 
   ifeq ($(ARCH),x86_64)
-    OPTIMIZEVM = -O3
-    OPTIMIZE = $(OPTIMIZEVM) -ffast-math
+    OPTIMIZEVM = -O2
+    OPTIMIZE = $(OPTIMIZEVM) -fno-omit-frame-pointer
     FILE_ARCH=x64
   endif
   ifeq ($(ARCH),x86)
-    OPTIMIZEVM = -O3 -march=i586
-    OPTIMIZE = $(OPTIMIZEVM) -ffast-math
+    OPTIMIZEVM = -O2 -march=i586
+    OPTIMIZE = $(OPTIMIZEVM) -fno-omit-frame-pointer
   endif
 
   SHLIBEXT=dll
@@ -747,6 +782,20 @@ ifdef MINGW
   CLIENT_LIBS = -lgdi32 -lole32
   RENDERER_LIBS = -lgdi32 -lole32
 
+  ifeq ($(ARCH),x86_64)
+    CLIENT_LIBS += -lavformat.dll
+    CLIENT_LIBS += -lavcodec.dll
+    CLIENT_LIBS += -lavutil.dll
+    CLIENT_LIBS += -lswscale.dll
+    CLIENT_LIBS += -lswresample.dll
+  else
+    CLIENT_LIBS += -lavformat.dll
+    CLIENT_LIBS += -lavcodec.dll
+    CLIENT_LIBS += -lavutil.dll
+    CLIENT_LIBS += -lswscale.dll
+    CLIENT_LIBS += -lswresample.dll
+  endif
+
   ifeq ($(USE_FREETYPE),1)
     ifneq ($(USE_INTERNAL_FREETYPE),1)
       FREETYPE_CFLAGS = -Ifreetype2
@@ -770,32 +819,28 @@ ifdef MINGW
   endif
 
 
-  # libmingw32 must be linked before libSDLmain
   CLIENT_LIBS += -lmingw32
   RENDERER_LIBS += -lmingw32
 
   ifeq ($(USE_LOCAL_HEADERS),1)
     CLIENT_CFLAGS += -I$(SDLHDIR)/include
+
     ifeq ($(ARCH),x86)
-    CLIENT_LIBS += $(LIBSDIR)/win32/libSDL2main.a \
-                      $(LIBSDIR)/win32/libSDL2.dll.a
-    RENDERER_LIBS += $(LIBSDIR)/win32/libSDL2main.a \
-                      $(LIBSDIR)/win32/libSDL2.dll.a
-    SDLDLL=SDL2.dll
-    CLIENT_EXTRA_FILES += $(LIBSDIR)/win32/SDL2.dll $(LIBSDIR)/win32/OpenAL32.dll
+    CLIENT_LIBS += $(LIBSDIR)/win32/libSDL3.dll.a
+    RENDERER_LIBS += $(LIBSDIR)/win32/libSDL3.dll.a
+    SDLDLL=SDL3.dll
+    CLIENT_EXTRA_FILES += $(LIBSDIR)/win32/SDL3.dll $(LIBSDIR)/win32/OpenAL32.dll
     else
-    CLIENT_LIBS += $(LIBSDIR)/win64/libSDL264main.a \
-                      $(LIBSDIR)/win64/libSDL264.dll.a
-    RENDERER_LIBS += $(LIBSDIR)/win64/libSDL264main.a \
-                      $(LIBSDIR)/win64/libSDL264.dll.a
-    SDLDLL=SDL264.dll
-    CLIENT_EXTRA_FILES += $(LIBSDIR)/win64/SDL264.dll $(LIBSDIR)/win64/OpenAL64.dll
+    CLIENT_LIBS += $(LIBSDIR)/win64/libSDL3.dll.a
+    RENDERER_LIBS += $(LIBSDIR)/win64/libSDL3.dll.a
+    SDLDLL=SDL3.dll
+    CLIENT_EXTRA_FILES += $(LIBSDIR)/win64/SDL3.dll $(LIBSDIR)/win64/OpenAL64.dll
     endif
   else
     CLIENT_CFLAGS += $(SDL_CFLAGS)
     CLIENT_LIBS += $(SDL_LIBS)
     RENDERER_LIBS += $(SDL_LIBS)
-    SDLDLL=SDL2.dll
+    SDLDLL=SDL3.dll
   endif
 
 else # ifdef MINGW
@@ -1119,14 +1164,8 @@ endif
 ifneq ($(BUILD_CLIENT),0)
   ifneq ($(USE_RENDERER_DLOPEN),0)
     TARGETS += $(B)/$(CLIENTBIN)$(FULLBINEXT) $(B)/renderer_sp_opengl1_$(SHLIBNAME)
-    ifneq ($(BUILD_RENDERER_REND2), 0)
-      TARGETS += $(B)/renderer_sp_rend2_$(SHLIBNAME)
-    endif
   else
     TARGETS += $(B)/$(CLIENTBIN)$(FULLBINEXT)
-    ifneq ($(BUILD_RENDERER_REND2), 0)
-      TARGETS += $(B)/$(CLIENTBIN)_rend2$(FULLBINEXT)
-    endif
   endif
 endif
 
@@ -1153,6 +1192,16 @@ ifneq ($(BUILD_GAME_QVM),0)
     $(B)/$(BASEGAME)/vm/qagame.sp.qvm \
     $(B)/$(BASEGAME)/vm/ui.sp.qvm
   endif
+endif
+
+ifneq ($(BUILD_BSPC),0)
+    TARGETS += $(B)/$(BSPCBIN)$(FULLBINEXT)
+    BSPC_CFLAGS += -DBSPC
+endif
+
+ifneq ($(ONLY_BSPC),0)
+    TARGETS = $(B)/$(BSPCBIN)$(FULLBINEXT)
+    BSPC_CFLAGS += -DBSPC
 endif
 
 ifeq ($(USE_OPENAL),1)
@@ -1231,7 +1280,7 @@ ifeq ($(USE_MUMBLE),1)
   CLIENT_CFLAGS += -DUSE_MUMBLE
 endif
 
-ifdef STEAM
+ifeq ($(STEAM),1)
   CFLAGS += -DSTEAM
   CLIENT_CFLAGS += -DSTEAM
 endif
@@ -1318,6 +1367,7 @@ BASE_CFLAGS += -Wformat=2 -Wformat-security -Wno-format-nonliteral
 BASE_CFLAGS += -Wstrict-aliasing=2 -Wmissing-format-attribute
 BASE_CFLAGS += -Wdisabled-optimization
 
+# V verbose
 ifeq ($(V),1)
 echo_cmd=@:
 Q=
@@ -1405,6 +1455,10 @@ $(echo_cmd) "SPLINE_CXX $<"
 $(Q)$(CXX) $(NOTSHLIBCFLAGS) $(CFLAGS) $(CLIENT_CFLAGS) $(OPTIMIZE) -o $@ -c $<
 endef
 
+define DO_BSPC_CC
+$(echo_cmd) "CC $<"
+$(Q)$(CC) $(NOTSHLIBCFLAGS) $(CFLAGS) $(CLIENT_CFLAGS) $(BSPC_CFLAGS) $(OPTIMIZE) -o $@ -c $<
+endef
 
 
 
@@ -1554,13 +1608,13 @@ endif
 ifneq ($(BUILD_ARCHIVE),0)
   ifneq ($(TARGETS),)
     ifndef DEBUG_MAKEFILE
-	@$(MAKE) $(TARGETS) $(B).zip V=$(V)
+	@$(MAKE) $(TARGETS) $(B).zip V=$(V) # V verbose
     endif
   endif
 else
   ifneq ($(TARGETS),)
     ifndef DEBUG_MAKEFILE
-	@$(MAKE) $(TARGETS) V=$(V)
+	@$(MAKE) $(TARGETS) V=$(V) # V verbose
     endif
   endif
 endif
@@ -1583,9 +1637,8 @@ makedirs:
 	@$(MKDIR) $(B)/client/opus
 	@$(MKDIR) $(B)/client/vorbis
 	@$(MKDIR) $(B)/renderer
-	@$(MKDIR) $(B)/rend2
-	@$(MKDIR) $(B)/rend2/glsl
 	@$(MKDIR) $(B)/ded
+	@$(MKDIR) $(B)/bspc
 	@$(MKDIR) $(B)/$(BASEGAME)/cgame
 	@$(MKDIR) $(B)/$(BASEGAME)/game
 	@$(MKDIR) $(B)/$(BASEGAME)/ui
@@ -1596,6 +1649,100 @@ makedirs:
 	@$(MKDIR) $(B)/tools/rcc
 	@$(MKDIR) $(B)/tools/cpp
 	@$(MKDIR) $(B)/tools/lburg
+
+#############################################################################
+# BSPC CLIENT
+#############################################################################
+
+ifneq ($(BUILD_BSPC), 0)
+  BSPC = 
+endif
+
+Q3BSPCOBJ = \
+  $(B)/bspc/_files.o \
+  $(B)/bspc/aas_areamerging.o \
+  $(B)/bspc/aas_cfg.o \
+  $(B)/bspc/aas_create.o \
+  $(B)/bspc/aas_edgemelting.o \
+  $(B)/bspc/aas_facemerging.o \
+  $(B)/bspc/aas_file.o \
+  $(B)/bspc/aas_gsubdiv.o \
+  $(B)/bspc/aas_map.o \
+  $(B)/bspc/aas_prunenodes.o \
+  $(B)/bspc/aas_store.o \
+  $(B)/bspc/be_aas_bspc.o \
+  $(B)/bspc/brushbsp.o \
+  $(B)/bspc/bspc.o \
+  $(B)/bspc/csg.o \
+  $(B)/bspc/faces.o \
+  $(B)/bspc/glfile.o \
+  $(B)/bspc/l_bsp_ent.o \
+  $(B)/bspc/l_bsp_hl.o \
+  $(B)/bspc/l_bsp_q1.o \
+  $(B)/bspc/l_bsp_q2.o \
+  $(B)/bspc/l_bsp_q3.o \
+  $(B)/bspc/l_bsp_sin.o \
+  $(B)/bspc/l_cmd.o \
+  $(B)/bspc/l_log.o \
+  $(B)/bspc/l_math.o \
+  $(B)/bspc/l_mem.o \
+  $(B)/bspc/l_poly.o \
+  $(B)/bspc/l_qfiles.o \
+  $(B)/bspc/l_threads.o \
+  $(B)/bspc/l_utils.o \
+  $(B)/bspc/leakfile.o \
+  $(B)/bspc/map.o \
+  $(B)/bspc/map_hl.o \
+  $(B)/bspc/map_q1.o \
+  $(B)/bspc/map_q2.o \
+  $(B)/bspc/map_q3.o \
+  $(B)/bspc/map_sin.o \
+  $(B)/bspc/nodraw.o \
+  $(B)/bspc/portals.o \
+  $(B)/bspc/prtfile.o \
+  $(B)/bspc/textures.o \
+  $(B)/bspc/tree.o \
+  $(B)/bspc/writebsp.o \
+  \
+  $(B)/bspc/l_precomp.o \
+  $(B)/bspc/l_struct.o \
+  $(B)/bspc/l_libvar.o \
+  $(B)/bspc/l_script.o \
+  $(B)/bspc/be_aas_cluster.o \
+  $(B)/bspc/be_aas_optimize.o \
+  $(B)/bspc/be_aas_reach.o \
+  $(B)/bspc/be_aas_sample.o \
+  $(B)/bspc/be_aas_bspq3.o \
+  $(B)/bspc/be_aas_move.o \
+  $(B)/bspc/be_aas_routealt.o \
+  $(B)/bspc/be_ai_char.o \
+  $(B)/bspc/be_ai_gen.o \
+  $(B)/bspc/be_ai_weap.o \
+  $(B)/bspc/be_ai_weight.o \
+  \
+  $(B)/bspc/cm_load.o \
+  $(B)/bspc/cm_patch.o \
+  $(B)/bspc/cm_test.o \
+  $(B)/bspc/cm_trace.o \
+  $(B)/bspc/md4.o \
+  $(B)/bspc/unzip.o
+
+#ifeq ($(USE_INTERNAL_ZLIB),1)
+#Q3BSPCOBJ += \
+  $(B)/client/adler32.o \
+  $(B)/client/crc32.o \
+  $(B)/client/inffast.o \
+  $(B)/client/inflate.o \
+  $(B)/client/inftrees.o \
+  $(B)/client/zutil.o
+#endif
+
+$(B)/$(BSPCBIN)$(FULLBINEXT): $(Q3BSPCOBJ)# $(ZLIB_LIBS)
+	$(echo_cmd) "LD $@"
+	$(Q)$(CXX) $(CLIENT_CFLAGS) $(CFLAGS) $(CLIENT_LDFLAGS) $(LDFLAGS) $(NOTSHLIBLDFLAGS) \
+		-o $@ $(Q3BSPCOBJ) # $(ZLIB_LIBS)
+
+    # add $(ZLIB_CFLAGS) if you want
 
 #############################################################################
 # QVM BUILD TOOLS
@@ -1896,86 +2043,17 @@ else
     $(B)/client/con_tty.o
 endif
 
-Q3R2OBJ = \
-  $(B)/rend2/tr_animation.o \
-  $(B)/rend2/tr_backend.o \
-  $(B)/rend2/tr_bsp.o \
-  $(B)/rend2/tr_cmds.o \
-  $(B)/rend2/tr_curve.o \
-  $(B)/rend2/tr_dsa.o \
-  $(B)/rend2/tr_extramath.o \
-  $(B)/rend2/tr_extensions.o \
-  $(B)/rend2/tr_fbo.o \
-  $(B)/rend2/tr_flares.o \
-  $(B)/rend2/tr_font.o \
-  $(B)/rend2/tr_glsl.o \
-  $(B)/rend2/tr_image.o \
-  $(B)/rend2/tr_image_bmp.o \
-  $(B)/rend2/tr_image_jpg.o \
-  $(B)/rend2/tr_image_pcx.o \
-  $(B)/rend2/tr_image_png.o \
-  $(B)/rend2/tr_image_tga.o \
-  $(B)/rend2/tr_image_dds.o \
-  $(B)/rend2/tr_init.o \
-  $(B)/rend2/tr_light.o \
-  $(B)/rend2/tr_main.o \
-  $(B)/rend2/tr_marks.o \
-  $(B)/rend2/tr_mesh.o \
-  $(B)/rend2/tr_model.o \
-  $(B)/rend2/tr_model_iqm.o \
-  $(B)/rend2/tr_noise.o \
-  $(B)/rend2/tr_postprocess.o \
-  $(B)/rend2/tr_scene.o \
-  $(B)/rend2/tr_shade.o \
-  $(B)/rend2/tr_shade_calc.o \
-  $(B)/rend2/tr_shader.o \
-  $(B)/rend2/tr_shadows.o \
-  $(B)/rend2/tr_sky.o \
-  $(B)/rend2/tr_surface.o \
-  $(B)/rend2/tr_vbo.o \
-  $(B)/rend2/tr_world.o \
-  \
-  $(B)/renderer/sdl_gamma.o \
-  $(B)/renderer/sdl_glimp.o
-
-Q3R2STRINGOBJ = \
-  $(B)/rend2/glsl/bokeh_fp.o \
-  $(B)/rend2/glsl/bokeh_vp.o \
-  $(B)/rend2/glsl/calclevels4x_fp.o \
-  $(B)/rend2/glsl/calclevels4x_vp.o \
-  $(B)/rend2/glsl/depthblur_fp.o \
-  $(B)/rend2/glsl/depthblur_vp.o \
-  $(B)/rend2/glsl/dlight_fp.o \
-  $(B)/rend2/glsl/dlight_vp.o \
-  $(B)/rend2/glsl/down4x_fp.o \
-  $(B)/rend2/glsl/down4x_vp.o \
-  $(B)/rend2/glsl/fogpass_fp.o \
-  $(B)/rend2/glsl/fogpass_vp.o \
-  $(B)/rend2/glsl/generic_fp.o \
-  $(B)/rend2/glsl/generic_vp.o \
-  $(B)/rend2/glsl/lightall_fp.o \
-  $(B)/rend2/glsl/lightall_vp.o \
-  $(B)/rend2/glsl/pshadow_fp.o \
-  $(B)/rend2/glsl/pshadow_vp.o \
-  $(B)/rend2/glsl/shadowfill_fp.o \
-  $(B)/rend2/glsl/shadowfill_vp.o \
-  $(B)/rend2/glsl/shadowmask_fp.o \
-  $(B)/rend2/glsl/shadowmask_vp.o \
-  $(B)/rend2/glsl/ssao_fp.o \
-  $(B)/rend2/glsl/ssao_vp.o \
-  $(B)/rend2/glsl/texturecolor_fp.o \
-  $(B)/rend2/glsl/texturecolor_vp.o \
-  $(B)/rend2/glsl/tonemap_fp.o \
-  $(B)/rend2/glsl/tonemap_vp.o
-
 Q3ROBJ = \
   $(B)/renderer/tr_altivec.o \
   $(B)/renderer/tr_animation.o \
+  $(B)/renderer/tr_arb.o \
   $(B)/renderer/tr_backend.o \
   $(B)/renderer/tr_bsp.o \
   $(B)/renderer/tr_cmds.o \
   $(B)/renderer/tr_cmesh.o \
   $(B)/renderer/tr_curve.o \
+  $(B)/renderer/tr_extensions.o \
+  $(B)/renderer/tr_fbo.o \
   $(B)/renderer/tr_flares.o \
   $(B)/renderer/tr_font.o \
   $(B)/renderer/tr_image.o \
@@ -2378,10 +2456,6 @@ $(B)/renderer_sp_opengl1_$(SHLIBNAME): $(Q3ROBJ) $(JPGOBJ) $(FTOBJ)
 	$(Q)$(CC) $(CFLAGS) $(SHLIBLDFLAGS) -o $@ $(Q3ROBJ) $(JPGOBJ) $(FTOBJ) \
 		$(THREAD_LIBS) $(LIBSDLMAIN) $(RENDERER_LIBS) $(LIBS)
 
-$(B)/renderer_sp_rend2_$(SHLIBNAME): $(Q3R2OBJ) $(Q3R2STRINGOBJ) $(JPGOBJ) $(FTOBJ)
-	$(echo_cmd) "LD $@"
-	$(Q)$(CC) $(CFLAGS) $(SHLIBLDFLAGS) -o $@ $(Q3R2OBJ) $(Q3R2STRINGOBJ) $(JPGOBJ) $(FTOBJ) \
-		$(THREAD_LIBS) $(LIBSDLMAIN) $(RENDERER_LIBS) $(LIBS)
 else
 $(B)/$(CLIENTBIN)$(FULLBINEXT): $(Q3OBJ) $(Q3ROBJ) $(JPGOBJ) $(FTOBJ) $(LIBSDLMAIN)
 	$(echo_cmd) "LD $@"
@@ -2389,11 +2463,6 @@ $(B)/$(CLIENTBIN)$(FULLBINEXT): $(Q3OBJ) $(Q3ROBJ) $(JPGOBJ) $(FTOBJ) $(LIBSDLMA
 		-o $@ $(Q3OBJ) $(Q3ROBJ) $(JPGOBJ) $(FTOBJ) \
 		$(LIBSDLMAIN) $(CLIENT_LIBS) $(RENDERER_LIBS) $(LIBS)
 
-$(B)/$(CLIENTBIN)_rend2$(FULLBINEXT): $(Q3OBJ) $(Q3R2OBJ) $(Q3R2STRINGOBJ) $(JPGOBJ) $(FTOBJ) $(LIBSDLMAIN)
-	$(echo_cmd) "LD $@"
-	$(Q)$(CXX) $(CLIENT_CFLAGS) $(CFLAGS) $(CLIENT_LDFLAGS) $(LDFLAGS) $(NOTSHLIBLDFLAGS) \
-		-o $@ $(Q3OBJ) $(Q3R2OBJ) $(Q3R2STRINGOBJ) $(JPGOBJ) $(FTOBJ) \
-		$(LIBSDLMAIN) $(CLIENT_LIBS) $(RENDERER_LIBS) $(LIBS)
 endif
 
 ifneq ($(strip $(LIBSDLMAIN)),)
@@ -2571,12 +2640,12 @@ Q3CGOBJ_ = \
   $(B)/$(BASEGAME)/cgame/cg_particles.o \
   $(B)/$(BASEGAME)/cgame/cg_players.o \
   $(B)/$(BASEGAME)/cgame/cg_playerstate.o \
-  $(B)/$(BASEGAME)/cgame/cg_polybus.o \
   $(B)/$(BASEGAME)/cgame/cg_predict.o \
   $(B)/$(BASEGAME)/cgame/cg_scoreboard.o \
   $(B)/$(BASEGAME)/cgame/cg_servercmds.o \
   $(B)/$(BASEGAME)/cgame/cg_snapshot.o \
   $(B)/$(BASEGAME)/cgame/cg_sound.o \
+  $(B)/$(BASEGAME)/cgame/cg_speakerscript.o \
   $(B)/$(BASEGAME)/cgame/cg_trails.o \
   $(B)/$(BASEGAME)/cgame/cg_view.o \
   $(B)/$(BASEGAME)/cgame/cg_weapons.o \
@@ -2617,10 +2686,13 @@ Q3GOBJ_ = \
   $(B)/$(BASEGAME)/game/ai_cast_fight.o \
   $(B)/$(BASEGAME)/game/ai_cast_func_attack.o \
   $(B)/$(BASEGAME)/game/ai_cast_func_boss1.o \
+  $(B)/$(BASEGAME)/game/ai_cast_func_hein.o \
   $(B)/$(BASEGAME)/game/ai_cast_funcs.o \
+  $(B)/$(BASEGAME)/game/ai_cast_loadouts.o \
   $(B)/$(BASEGAME)/game/ai_cast_script_actions.o \
   $(B)/$(BASEGAME)/game/ai_cast_script.o \
   $(B)/$(BASEGAME)/game/ai_cast_script_ents.o \
+  $(B)/$(BASEGAME)/game/ai_cast_survival.o \
   $(B)/$(BASEGAME)/game/ai_cast_sight.o \
   $(B)/$(BASEGAME)/game/ai_cast_think.o \
   $(B)/$(BASEGAME)/game/ai_chat.o \
@@ -2652,6 +2724,9 @@ Q3GOBJ_ = \
   $(B)/$(BASEGAME)/game/g_session.o \
   $(B)/$(BASEGAME)/game/g_spawn.o \
   $(B)/$(BASEGAME)/game/g_svcmds.o \
+  $(B)/$(BASEGAME)/game/g_survival_buy.o \
+  $(B)/$(BASEGAME)/game/g_survival_score.o \
+  $(B)/$(BASEGAME)/game/g_survival_misc.o \
   $(B)/$(BASEGAME)/game/g_target.o \
   $(B)/$(BASEGAME)/game/g_team.o \
   $(B)/$(BASEGAME)/game/g_tramcar.o \
@@ -2684,6 +2759,8 @@ $(B)/$(BASEGAME)/vm/qagame.sp.qvm: $(Q3GVMOBJ) $(GDIR)/g_syscalls.asm $(Q3ASM)
 #############################################################################
 
 Q3UIOBJ_ = \
+  $(B)/$(BASEGAME)/ui/steam.o \
+  $(B)/$(BASEGAME)/ui/steamshim_child.o \
   $(B)/$(BASEGAME)/ui/ui_main.o \
   $(B)/$(BASEGAME)/ui/ui_atoms.o \
   $(B)/$(BASEGAME)/ui/ui_gameinfo.o \
@@ -2714,6 +2791,17 @@ $(B)/$(BASEGAME)/vm/ui.sp.qvm: $(Q3UIVMOBJ) $(UIDIR)/ui_syscalls.asm $(Q3ASM)
 
 
 
+#############################################################################
+## BSPC
+#############################################################################
+$(B)/bspc/%.o: $(BSPCDIR)/%.c
+	$(DO_BSPC_CC)
+
+$(B)/bspc/%.o: $(BSPCBLIBDIR)/%.c
+	$(DO_BSPC_CC)
+
+$(B)/bspc/%.o: $(BSPCCMDIR)/%.c
+	$(DO_BSPC_CC)
 
 #############################################################################
 ## STEAM INTEGRATION
@@ -2724,6 +2812,12 @@ $(B)/$(BASEGAME)/game/%.o: $(STEAMSHIMDIR)/%.c
 
 $(B)/$(BASEGAME)/game/%.o: $(STEAMDIR)/%.c
 	$(DO_GAME_CC)
+
+$(B)/$(BASEGAME)/ui/%.o: $(STEAMSHIMDIR)/%.c
+	$(DO_UI_CC)
+
+$(B)/$(BASEGAME)/ui/%.o: $(STEAMDIR)/%.c
+	$(DO_UI_CC)
 
 #############################################################################
 ## CLIENT/SERVER RULES
@@ -2804,15 +2898,6 @@ $(B)/renderer/%.o: $(RDIR)/%.c
 
 $(B)/renderer/tr_altivec.o: $(RDIR)/tr_altivec.c
 	$(DO_REF_CC_ALTIVEC)
-
-$(B)/rend2/glsl/%.c: $(R2DIR)/glsl/%.glsl $(STRINGIFY)
-	$(DO_REF_STR)
-
-$(B)/rend2/glsl/%.o: $(B)/rend2/glsl/%.c
-	$(DO_REF_CC)
-	
-$(B)/rend2/%.o: $(R2DIR)/%.c
-	$(DO_REF_CC)
 
 $(B)/renderer/%.o: $(FTDIR)/src/autofit/%.c
 	$(DO_REF_CC)
@@ -3001,7 +3086,7 @@ $(B)/$(BASEGAME)/ui/q_shared.asm: $(CMDIR)/q_shared.c $(Q3LCC)
 
 OBJ = $(Q3OBJ) $(Q3ROBJ) $(Q3R2OBJ) $(Q3DOBJ) $(JPGOBJ) $(FTOBJ) \
   $(Q3GOBJ) $(Q3CGOBJ) $(Q3UIOBJ) \
-  $(Q3GVMOBJ) $(Q3CGVMOBJ) $(Q3UIVMOBJ) 
+  $(Q3GVMOBJ) $(Q3CGVMOBJ) $(Q3UIVMOBJ) $(Q3BSPCOBJ)
 TOOLSOBJ = $(LBURGOBJ) $(Q3CPPOBJ) $(Q3RCCOBJ) $(Q3LCCOBJ) $(Q3ASMOBJ)
 STRINGOBJ = $(Q3R2STRINGOBJ)
 
@@ -3018,13 +3103,7 @@ ifneq ($(BUILD_CLIENT),0)
 	$(INSTALL) $(STRIP_FLAG) -m 0755 $(BR)/$(CLIENTBIN)$(FULLBINEXT) $(COPYBINDIR)/$(CLIENTBIN)$(FULLBINEXT)
   ifneq ($(USE_RENDERER_DLOPEN),0)
 	$(INSTALL) $(STRIP_FLAG) -m 0755 $(BR)/renderer_sp_opengl1_$(SHLIBNAME) $(COPYBINDIR)/renderer_sp_opengl1_$(SHLIBNAME)
-    ifneq ($(BUILD_RENDERER_REND2),0)
-	$(INSTALL) $(STRIP_FLAG) -m 0755 $(BR)/renderer_sp_rend2_$(SHLIBNAME) $(COPYBINDIR)/renderer_sp_rend2_$(SHLIBNAME)
-    endif
   else
-    ifneq ($(BUILD_RENDERER_REND2),0)
-	$(INSTALL) $(STRIP_FLAG) -m 0755 $(BR)/$(CLIENTBIN)_rend2$(FULLBINEXT) $(COPYBINDIR)/$(CLIENTBIN)_rend2$(FULLBINEXT)
-    endif
   endif
 endif
 

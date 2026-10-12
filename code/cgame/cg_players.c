@@ -773,7 +773,7 @@ static qboolean CG_RegisterClientModelname( clientInfo_t *ci, const char *modelN
 			cgs.media.zombieDeathSound = trap_S_RegisterSound( "sound/world/ceramicbreak.wav" ); // Zombie Gib
 
 			cgs.media.spiritSkullModel = trap_R_RegisterModel( "models/mapobjects/skull/skul2t.md3" );
-
+			
 		} else if ( !Q_strcasecmp( (char *)modelName, "beast" ) )      {
 			cgs.media.helgaSpiritSkullShader = trap_R_RegisterShader( "helgaSpiritGhost" );
 			cgs.media.helgaSpiritTrailShader = trap_R_RegisterShader( "helgaSpiritTrail" );
@@ -2609,7 +2609,7 @@ static void CG_PlayerAngles( centity_t *cent, vec3_t legs[3], vec3_t torso[3], v
 CG_HasteTrail
 ===============
 */
-/*
+
 static void CG_HasteTrail( centity_t *cent ) {
 	localEntity_t   *smoke;
 	vec3_t origin;
@@ -2638,7 +2638,7 @@ static void CG_HasteTrail( centity_t *cent ) {
 	// use the optimized local entity add
 	smoke->leType = LE_SCALE_FADE;
 }
-*/
+
 
 //----(SA)	added and modified from missionpack
 /*
@@ -2737,7 +2737,7 @@ static void CG_PlayerPowerups( centity_t *cent ) {
 	int powerups;
 
 	if ( cent->pe.teslaDamagedTime > cg.time - 400 ) {
-		if ( cgs.gametype == GT_GOTHIC ) {
+		if ( cg_gothic.integer ) {
 		    trap_R_AddLightToScene( cent->lerpOrigin, 128 + 128 * sin( cg.time * cg.time ), 1, 0, 0, 0 ); // red tesla lights for gothicstein
 		    } else {
 		    trap_R_AddLightToScene( cent->lerpOrigin, 128 + 128 * sin( cg.time * cg.time ), 0.2, 0.6, 1, 0 ); // default case
@@ -2745,25 +2745,9 @@ static void CG_PlayerPowerups( centity_t *cent ) {
 	}
 
 	// RF, AI don't use these effects, they are generally added manually by the game
-	if ( cent->currentState.aiChar ) {
-		return;
-	}
-
-//----(SA)	test stuff leave in, but comment out
-//	if(cg_forceModel.integer) {
-//		vec3_t orig, forward, li;
-//		trace_t		trace;
-//
-//		AngleVectors(cg.refdefViewAngles, forward, NULL, NULL);
-//		VectorNormalize(forward); // just in case
-//		VectorCopy(cent->lerpOrigin, orig);
-//		orig[2]+=cg.predictedPlayerState.viewheight;
-//		VectorMA(orig, 1000, forward, li);
-//		CG_Trace(&trace, orig, NULL, NULL, li, -1, MASK_SHOT);
-//		VectorMA(trace.endpos, -5, forward, li);
-//		trap_R_AddLightToScene( li, 100 + 100*trace.fraction, 1, 1, 1, 1 );
-//	}
-//----(SA)	end
+	//if ( cent->currentState.aiChar ) {
+		//return;
+	//}
 
 	powerups = cent->currentState.powerups;
 	if ( !powerups ) {
@@ -2775,10 +2759,11 @@ static void CG_PlayerPowerups( centity_t *cent ) {
 		trap_R_AddLightToScene( cent->lerpOrigin, 200 + ( rand() & 31 ), 0.2, 0.2, 1, 0 );
 	}
 
-	// flight plays a looped sound
-//	if ( powerups & ( 1 << PW_FLIGHT ) ) {
-//		CG_S_AddLoopingSound( cent->currentState.number, cent->lerpOrigin, vec3_origin, cgs.media.flightSound, 255 );
-//	}
+	// vampire gives a red light
+	if ( powerups & ( 1 << PW_VAMPIRE ) ) {
+		trap_R_AddLightToScene( cent->lerpOrigin, 200 + ( rand() & 31 ), 1.0, 0.0, 0.0, 0 );
+	}
+
 
 	// redflag
 	if ( powerups & ( 1 << PW_REDFLAG ) ) {
@@ -2791,13 +2776,11 @@ static void CG_PlayerPowerups( centity_t *cent ) {
 		CG_TrailItem( cent, cgs.media.blueFlagModel );
 		trap_R_AddLightToScene( cent->lerpOrigin, 200 + ( rand() & 31 ), 0.2, 0.2, 1, 0 );
 	}
-
-	// haste leaves smoke trails
-	/*
-	if ( powerups & ( 1 << PW_HASTE ) ) {
+	
+	if ( powerups & ( 1 << PW_HASTE_SURV ) ) {
 		CG_HasteTrail( cent );
 	}
-	*/
+	
 }
 
 
@@ -3099,6 +3082,27 @@ static void CG_PlayerSplash( centity_t *cent ) {
 	trap_R_AddPolyToScene( cgs.media.wakeMarkShader, 4, verts );
 }
 
+
+static void CG_AddXShieldLoopSound( centity_t *cent ) {
+	const playerState_t *ps;
+
+	if ( cent->currentState.clientNum == cg.snap->ps.clientNum ) {
+		ps = &cg.predictedPlayerState;
+	} else {
+		ps = NULL;
+	}
+
+	if ( ps && ps->powerups[PW_XSHIELD] > cg.time ) {
+		CG_S_AddLoopingSound(
+			cent->currentState.number,
+			cent->lerpOrigin,	
+			vec3_origin,
+			cgs.media.xshieldLoopSound,
+			255
+		);
+	}
+}
+
 //==========================================================================
 // Zombie Effects
 
@@ -3175,7 +3179,7 @@ void CG_AddZombieSpiritEffect( centity_t *cent ) {
 
 	static int lastSpiritRelease;
 
-	if ( cent->currentState.aiChar != AICHAR_ZOMBIE ) {
+	if ( cent->currentState.aiChar != AICHAR_ZOMBIE && cent->currentState.aiChar != AICHAR_ZOMBIE_SURV && cent->currentState.aiChar != AICHAR_ZOMBIE_FLAME && cent->currentState.aiChar != AICHAR_ZOMBIE_GHOST) {
 		return;
 	}
 
@@ -3483,7 +3487,7 @@ void CG_AddZombieFlameEffect( centity_t *cent ) {
 
 	// qboolean active=qfalse; // TTimo: unused
 
-	if ( cent->currentState.aiChar != AICHAR_ZOMBIE ) {
+	if ( cent->currentState.aiChar != AICHAR_ZOMBIE && cent->currentState.aiChar != AICHAR_ZOMBIE_SURV && cent->currentState.aiChar != AICHAR_ZOMBIE_FLAME  && cent->currentState.aiChar != AICHAR_ZOMBIE_GHOST ) {
 		return;
 	}
 
@@ -3562,7 +3566,7 @@ CG_AddZombieFlameEffect
 void CG_AddZombieFlameShort( centity_t *cent ) {
 	vec3_t morg, maxis[3], mang;
 
-	if ( cent->currentState.aiChar != AICHAR_ZOMBIE ) {
+	if ( cent->currentState.aiChar != AICHAR_ZOMBIE && cent->currentState.aiChar != AICHAR_ZOMBIE_SURV && cent->currentState.aiChar != AICHAR_ZOMBIE_FLAME && cent->currentState.aiChar != AICHAR_ZOMBIE_GHOST ) {
 		return;
 	}
 
@@ -3614,7 +3618,7 @@ void CG_AddLoperLightningEffect( centity_t *cent ) {
 	int numPoints;
 	float colTake;
 
-	if ( cent->currentState.aiChar != AICHAR_LOPER ) {
+	if ( cent->currentState.aiChar != AICHAR_LOPER && cent->currentState.aiChar != AICHAR_LOPER_SPECIAL) {
 		return;
 	}
 
@@ -3643,7 +3647,7 @@ void CG_AddLoperLightningEffect( centity_t *cent ) {
 	// show a dlight
 	// color
 	colTake = 0.8 - fabs( sin( cg.time ) ) * 0.3;
-	if ( cgs.gametype == GT_GOTHIC ) {
+	if ( cg_gothic.integer ) {
 	   c[0] = 1.0 - colTake;
 	   c[1] = 0.0 - 0.0 * colTake;
 	   c[2] = 0.0;
@@ -3745,7 +3749,7 @@ void CG_AddLoperGroundEffect( centity_t *cent ) {
 	int duration;
 	float alpha, lightAlpha = 0.0f;   // TTimo: init
 
-	if ( cent->currentState.aiChar != AICHAR_LOPER ) {
+	if ( cent->currentState.aiChar != AICHAR_LOPER && cent->currentState.aiChar != AICHAR_LOPER_SPECIAL) {
 		return;
 	}
 
@@ -3794,7 +3798,7 @@ void CG_AddLoperGroundEffect( centity_t *cent ) {
 	// show a dlight
 	// color
 	colTake = 0.8 - fabs( sin( cg.time ) ) * 0.3;
-	if ( cgs.gametype == GT_GOTHIC ) {
+	if ( cg_gothic.integer ) {
 	   c[0] = 1.0 - colTake;
 	   c[1] = 0.0 - 0.0 * colTake;
 	   c[2] = 0.0;
@@ -3824,7 +3828,7 @@ void CG_AddLoperGroundEffect( centity_t *cent ) {
 		if ( cent->pe.loperGroundChargeToggle ^= 1 ) {
 			// random blue
 			colTake = 0.5 + random() * 0.5;
-			if ( cgs.gametype == GT_GOTHIC ) {
+			if ( cg_gothic.integer ) {
 			   c[0] = 1.0 - colTake;
 			   c[1] = 1.0 - colTake;
 			   c[2] = c[1] + 0.2;
@@ -4197,173 +4201,11 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, int team, enti
 		ent->reFlags |= REFLAG_FULL_LOD;
 	}
 
-//----(SA)	testing
-//----(SA)	disabling
-//	if( cent->currentState.eFlags & EF_DEAD ) {
-//		ent->reFlags |= REFLAG_DEAD_LOD;
-//	}
-//----(SA)	end
-
 	backupRefEnt = *ent;
 
 	if ( powerups & ( 1 << PW_INVIS ) ) {
 		ent->customShader = cgs.media.invisShader;
 		trap_R_AddRefEntityToScene( ent );
-#if 0
-		// -------------------------------
-		// Zombie effects
-		//
-	} else if ( es->aiChar == AICHAR_ZOMBIE ) {
-
-		// Zombie needs special processing, to remove the bits of flesh that have been torn away
-
-		if ( ent->hModel == cent->pe.torsoRefEnt.hModel ) {
-			//ent->reFlags = REFLAG_ZOMBIEFX;
-			ent->shaderTime = 0;
-		} else if ( ent->hModel == cent->pe.legsRefEnt.hModel )     {
-			//ent->reFlags = REFLAG_ZOMBIEFX2;	// ref needs to know this is the legs
-			ent->shaderTime = 0;
-		}
-
-		// first, check for portal spawning
-		if ( es->time2 ) {
-			if ( es->time2 < cg.time ) {
-				return; // not ready yet
-			}
-			// fade in the skeleton, skin should "compose" (reverse decomposition)
-			alpha = (float)( cg.time - es->time2 ) / PORTAL_ZOMBIE_SPAWNTIME;
-			if ( alpha > 1 ) {
-				alpha = 1;
-			}
-			// skeleton fades in towards end of effect
-			if ( alpha < 0.5 ) {
-				ent->shaderRGBA[3] = 0;
-			} else { ent->shaderRGBA[3] = ( unsigned char )( ( alpha - 0.5 ) * 2.0 * 255 );}
-			//
-			ent->shaderTime = 0.001 * ( 1.0 - alpha ) * ZOMBIEFX_FADEOUT_TIME;
-
-			if ( ent->hModel == cent->pe.headRefEnt.hModel ) {
-				//ent->reFlags = REFLAG_ZOMBIEFX;
-				ent->customShader = cgs.media.zombieHeadFadeShader;
-			}
-
-			trap_R_AddRefEntityToScene( ent );
-
-			// add flaming effect
-			onFire = qtrue;
-			alpha *= 0.5;
-
-		} else {
-
-			// if the Zombie is dead, the skin should decompose
-
-			ent->shaderRGBA[3] = 255;
-
-			if ( es->eFlags & EF_MONSTER_EFFECT2 &&
-				 cent->currentState.effect2Time < cg.time ) { // Ridah, Zombie death effect
-
-				if ( ent->hModel == cent->pe.headRefEnt.hModel ) {
-					//ent->reFlags = REFLAG_ZOMBIEFX;
-					ent->customShader = cgs.media.zombieHeadFadeShader;
-				}
-
-				ent->shaderTime = 0.001 * ( cg.time - cent->currentState.effect2Time );
-				trap_R_AddRefEntityToScene( ent );
-/*
-				// skeleton: add legs and head parts
-				if (ent->hModel == cent->pe.legsRefEnt.hModel) {
-					ent->skinNum = 0;
-					ent->reFlags = 0;
-					ent->customShader = cgs.media.skeletonSkinShader;
-
-					// legs
-					ent->hModel = cgs.media.skeletonLegsModel;
-					trap_R_AddRefEntityToScene( ent );
-
-					// torso (just get this so we can place the head correctly)
-					parentEnt = *ent;
-					CG_PositionEntityOnTag( ent, &parentEnt, parentEnt.hModel, "tag_torso", NULL );
-					ent->hModel = cgs.media.skeletonTorsoModel;
-
-					// head
-					parentEnt = *ent;
-					CG_PositionEntityOnTag( ent, &parentEnt, parentEnt.hModel, "tag_head", NULL );
-					ent->hModel = cgs.media.skeletonHeadModel;
-					trap_R_AddRefEntityToScene( ent );
-				}
-*/
-			} else {    // show it normally
-				trap_R_AddRefEntityToScene( ent );
-			}
-		}
-
-		// restore previous state
-		*ent = backupRefEnt;
-#endif
-/*
-	} else if (es->eFlags & EF_MONSTER_EFFECT2 && es->aiChar == AICHAR_ZOMBIE &&
-				cent->currentState.effect2Time < cg.time) {	// Ridah, Zombie death effect
-		const int fadeRiseTime = 4000;
-
-		if (cent->pe.zombieDeathFadeStart < cg.time && ent->hModel == cent->pe.legsRefEnt.hModel) {
-			// add the skeleton models starting with the legs
-			ent->fadeEndTime = 0;
-			ent->fadeStartTime = 0;
-			ent->skinNum = 0;
-
-			// legs
-			ent->hModel = cgs.media.skeletonLegsModel;
-			ent->customSkin = cgs.media.skeletonLegsSkin;
-			trap_R_AddRefEntityToScene( ent );
-
-			// torso
-			parentEnt = *ent;
-			CG_PositionEntityOnTag( ent, &parentEnt, parentEnt.hModel, "tag_torso", NULL );
-			ent->hModel = cgs.media.skeletonTorsoModel;
-			ent->customSkin = cgs.media.skeletonTorsoSkin;
-			trap_R_AddRefEntityToScene( ent );
-
-			// head
-			parentEnt = *ent;
-			CG_PositionEntityOnTag( ent, &parentEnt, parentEnt.hModel, "tag_head", NULL );
-			ent->hModel = cgs.media.skeletonHeadModel;
-			ent->customSkin = cgs.media.skeletonHeadSkin;
-			trap_R_AddRefEntityToScene( ent );
-
-			// restore previous state
-			*ent = backupRefEnt;
-		}
-
-		if (cent->pe.zombieDeathFadeEnd + fadeRiseTime > cg.time) {
-			// slowly fade the zombie "skin" out, revealing the skeleton underneath
-
-			//VectorSubtract( ent->origin, cg.snap->ps.origin, ent->fireRiseDir );
-			//VectorNegate( ent->axis[0], ent->fireRiseDir );
-			VectorNormalize2( ent->axis[0], ent->fireRiseDir );
-
-			if (cent->pe.zombieDeathFadeEnd > cg.time) {
-
-				// the zombie has hard-edged alpha blending on it's body texture by default
-				// so we need to override that for smooth fading
-				if (ent->hModel == cent->pe.legsRefEnt.hModel ||
-					ent->hModel == cent->pe.torsoRefEnt.hModel) {
-					ent->customShader = cgs.media.zombieBodyFadeShader;
-				} else if (ent->hModel == cent->pe.headRefEnt.hModel) {
-					ent->customShader = cgs.media.zombieHeadFadeShader;
-				}
-				// fade the alpha from 0 -> 255 as the time goes, which will fade from front to back
-				if (cent->pe.zombieDeathFadeStart > cg.time) {
-					ent->shaderRGBA[3] = 128;
-				} else {
-					ent->shaderRGBA[3] = 128 - (unsigned char)(128.0*pow(((float)(cg.time - cent->pe.zombieDeathFadeStart) / (float)(cent->pe.zombieDeathFadeEnd - cent->pe.zombieDeathFadeStart)), 2));
-				}
-				ent->shaderTime = 1.0;
-
-				trap_R_AddRefEntityToScene( ent );
-			}
-		}
-*/
-		// -------------------------------
 	} else {
 
 		if ( CG_EntOnFire( &cg_entities[es->number] ) ) {
@@ -4380,16 +4222,24 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, int team, enti
 			}
 			trap_R_AddRefEntityToScene( ent );
 		}
+
+		if ( powerups & ( 1 << PW_VAMPIRE ) ) {
+
+			ent->customShader = cgs.media.redQuadShader;
+			
+			trap_R_AddRefEntityToScene( ent );
+		}
 		if ( powerups & ( 1 << PW_REGEN ) ) {
 			if ( ( ( cg.time / 100 ) % 10 ) == 1 ) {
 				ent->customShader = cgs.media.regenShader;
 				trap_R_AddRefEntityToScene( ent );
 			}
 		}
-		/*if ( powerups & ( 1 << PW_BATTLESUIT ) ) {
+
+		if ( powerups & ( 1 << PW_BATTLESUIT_SURV ) ) {
 			ent->customShader = cgs.media.battleSuitShader;
 			trap_R_AddRefEntityToScene( ent );
-		}*/
+		}
 	}
 
 	if ( !onFire && CG_EntOnFire( &cg_entities[es->number] ) ) {
@@ -4404,7 +4254,7 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, int team, enti
 		}
 	}
 	// Flaming zombie always shows a little fire
-	if ( !es->time2 && alpha < 1.0 && ( cent->currentState.aiChar == AICHAR_ZOMBIE ) && IS_FLAMING_ZOMBIE( cent->currentState ) /*&& !(cent->currentState.eFlags & EF_DEAD)*/ ) {
+	if ( !es->time2 && alpha < 1.0 && ( cent->currentState.aiChar == AICHAR_ZOMBIE || cent->currentState.aiChar == AICHAR_ZOMBIE_SURV || cent->currentState.aiChar == AICHAR_ZOMBIE_GHOST || cent->currentState.aiChar == AICHAR_ZOMBIE_FLAME ) && IS_FLAMING_ZOMBIE( cent->currentState ) /*&& !(cent->currentState.eFlags & EF_DEAD)*/ ) {
 		onFire = qtrue;
 		// set the alpha
 		alpha = 1.0;
@@ -4419,18 +4269,7 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, int team, enti
 		if ( VectorCompare( ent->fireRiseDir, vec3_origin ) ) {
 			VectorSet( ent->fireRiseDir, 0, 0, 1 );
 		}
-/*
-		if (ent->fireRiseDir[2] > 0)
-			ent->fireRiseDir[2] *= -1;
 
-		ent->customShader = cgs.media.dripWetShader2;
-		trap_R_AddRefEntityToScene( ent );
-
-		ent->customShader = cgs.media.dripWetShader;
-		trap_R_AddRefEntityToScene( ent );
-
-		VectorCopy( fireRiseDir, ent->fireRiseDir );
-*/
 		ent->customShader = cgs.media.onFireShader;
 		trap_R_AddRefEntityToScene( ent );
 
@@ -4449,7 +4288,7 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, int team, enti
 		alpha = ( 400.0 - (float)( cg.time - cg_entities[es->number].pe.teslaDamagedTime ) ) / 400.0;
 
 
-        if ( cgs.gametype == GT_GOTHIC ) {
+        if ( cg_gothic.integer ) {
 		   ent->shaderRGBA[0] = ( unsigned char )( 10.0 * alpha );
 		   ent->shaderRGBA[1] = ( unsigned char )( 0.0 * alpha );
 		   ent->shaderRGBA[2] = ( unsigned char )( 0.0 * alpha );
@@ -4744,13 +4583,49 @@ void CG_Player( centity_t *cent ) {
 	//
 	CG_AddFireLight( cent );
 
+	// XShield loop (per-frame)
+	CG_AddXShieldLoopSound(cent);
+
 	//
 	// add the legs
 	//
 	legs.hModel = ci->legsModel;
 	legs.customSkin = ci->legsSkin;
 
-	VectorCopy( cent->lerpOrigin, legs.origin );
+	vec3_t modelOffset = {0, 0, 0};
+
+	switch (cent->currentState.aiChar)
+	{
+	case AICHAR_PRIEST:
+		modelOffset[0] = -20.0f;
+		break;
+
+	case AICHAR_XSHEPHERD:
+		modelOffset[0] = -35.0f;
+		break;
+	}
+
+	if (modelOffset[0] || modelOffset[1] || modelOffset[2])
+	{
+		vec3_t forward, right, up;
+
+		VectorCopy(legs.axis[0], forward);
+		VectorCopy(legs.axis[1], right);
+		VectorCopy(legs.axis[2], up);
+
+		vec3_t worldOffset;
+		VectorClear(worldOffset);
+
+		VectorMA(worldOffset, modelOffset[0], forward, worldOffset);
+		VectorMA(worldOffset, modelOffset[1], right, worldOffset);
+		VectorMA(worldOffset, modelOffset[2], up, worldOffset);
+
+		VectorAdd(cent->lerpOrigin, worldOffset, legs.origin);
+	}
+	else
+	{
+		VectorCopy(cent->lerpOrigin, legs.origin);
+	}
 
 	if ( ci->playermodelScale[0] != 0 ) {  // player scaled, adjust for the (-24) offset of player legs origin to ground
 		legs.origin[2] -= 24.0f * ( 1.0f - ci->playermodelScale[2] );
@@ -4793,13 +4668,13 @@ void CG_Player( centity_t *cent ) {
 	//----(SA)	also taking care of the Loper's interesting heirarchy (his upper body is effectively the same as a weapon_hand.md3.  it keeps things connected, but has no geometry)
 
 	if ( !ci->isSkeletal ) {
-		if ( ( cgsnap == cent && ( cg.snap->ps.pm_flags & PMF_LADDER ) ) || ( cent->currentState.aiChar == AICHAR_LOPER ) ) {
+		if ( ( cgsnap == cent && ( cg.snap->ps.pm_flags & PMF_LADDER ) ) || ( cent->currentState.aiChar == AICHAR_LOPER || cent->currentState.aiChar == AICHAR_LOPER_SPECIAL ) ) {
 			CG_PositionEntityOnTag( &torso, &legs, "tag_torso", 0, NULL );
 		} else {
 			CG_PositionRotatedEntityOnTag( &torso,  &legs, "tag_torso" );
 		}
 	} else {    // just clear out the angles
-		if ( ( cgsnap == cent && ( cg.snap->ps.pm_flags & PMF_LADDER ) ) || ( cent->currentState.aiChar == AICHAR_LOPER ) ) {
+		if ( ( cgsnap == cent && ( cg.snap->ps.pm_flags & PMF_LADDER ) ) || ( cent->currentState.aiChar == AICHAR_LOPER || cent->currentState.aiChar == AICHAR_LOPER_SPECIAL ) ) {
 			memcpy( torso.axis, legs.axis, sizeof( torso.axis ) );
 		}
 	}
@@ -4887,7 +4762,11 @@ void CG_Player( centity_t *cent ) {
 
 				switch ( cent->currentState.aiChar ) {
 				case AICHAR_ZOMBIE:
+				case AICHAR_ZOMBIE_SURV:
+				case AICHAR_ZOMBIE_FLAME:
+				case AICHAR_ZOMBIE_GHOST:
 				case AICHAR_LOPER:
+				case AICHAR_LOPER_SPECIAL:
 				case AICHAR_DOG:
 				case AICHAR_XSHEPHERD:
 					talk_frame = (int)( (float)talk_frame * 1.2 );
@@ -5027,7 +4906,7 @@ void CG_Player( centity_t *cent ) {
 	// add player specific models
 	//
 
-	if ( cent->currentState.aiChar == AICHAR_LOPER ) {
+	if ( cent->currentState.aiChar == AICHAR_LOPER || cent->currentState.aiChar == AICHAR_LOPER_SPECIAL ) {
 		if ( ci->partModels[8] ) {
 			vec3_t angles;
 

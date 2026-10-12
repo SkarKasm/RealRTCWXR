@@ -166,9 +166,31 @@ void UI_LoadArenas( void ) {
 		strcat( filename, dirptr );
 		UI_LoadArenasFromFile( filename );
 	}
-	trap_Print( va( "%i arenas parsed\n", ui_numArenas ) );
+	//trap_Print( va( "%i arenas parsed\n", ui_numArenas ) );
 	if ( UI_OutOfMemory() ) {
 		trap_Print( S_COLOR_YELLOW "WARNING: not enough memory in pool to load all arenas\n" );
+	}
+}
+
+/*
+===============
+UI_ResolveArenaLongnames
+===============
+*/
+// must run before UI_FreeTranslateTable(); UI_LoadArenasIntoMapList() runs later, after the table is gone
+void UI_ResolveArenaLongnames( void ) {
+	int n;
+	char *longname;
+	const char *translated;
+
+	for ( n = 0; n < ui_numArenas; n++ ) {
+		longname = Info_ValueForKey( ui_arenaInfos[n], "longname" );
+		if ( longname[0] == '@' ) {
+			translated = TranslateTable_Find( longname + 1 );
+			if ( translated ) {
+				Info_SetValueForKey( ui_arenaInfos[n], "longname", translated );
+			}
+		}
 	}
 }
 
@@ -178,13 +200,53 @@ UI_LoadArenasIntoMapList
 ===============
 */
 void UI_LoadArenasIntoMapList( void ) {
-	int			n;
+	int   n;
+	char  *type;
+	char  *chapter;
+	char  *hubonly;
+	int   enemiesFilter;
+	int   chapterFilter;
 
 	uiInfo.mapCount = 0;
 
+	// ui_sv_enemies:
+	// 0 = all, 1 = human, 2 = undead
+	enemiesFilter = ui_sv_enemies.integer;
+
+	// clamp just in case
+	if ( enemiesFilter < SV_ENEMIES_FILTER_ALL || enemiesFilter > SV_ENEMIES_FILTER_UNDEAD ) {
+		enemiesFilter = SV_ENEMIES_FILTER_ALL;
+	}
+
+	// ui_camp_chapter: 0 = all missions, 1-7 = a single mission
+	chapterFilter = ui_camp_chapter.integer;
+
 	for ( n = 0; n < ui_numArenas; n++ ) {
+		int enemiesType = UI_ParseArenaEnemiesType( ui_arenaInfos[n] );
+
+		// Apply enemies filter ONLY when filter is not "all"
+		// Maps with enemiesType == ALL are visible under any filter.
+		if ( enemiesFilter != SV_ENEMIES_FILTER_ALL &&
+			 enemiesType != SV_ENEMIES_FILTER_ALL &&
+			 enemiesType != enemiesFilter ) {
+			// Doesn't match the selected filter – skip this map
+			continue;
+		}
+
+		// skip if "chapter" key doesn't match the mission filter (survival maps have no "chapter" key)
+		chapter = Info_ValueForKey( ui_arenaInfos[n], "chapter" );
+		if ( *chapter && chapterFilter != 0 && atoi( chapter ) != chapterFilter ) {
+			continue;
+		}
+
+		// "hubonly" maps only show when the Malta hub story progression is enabled
+		hubonly = Info_ValueForKey( ui_arenaInfos[n], "hubonly" );
+		if ( *hubonly && ui_midgame.integer != 1 ) {
+			continue;
+		}
 		// determine type
 
+		// "longname" @KEY references are already resolved by UI_ResolveArenaLongnames() at init time
 		uiInfo.mapList[uiInfo.mapCount].cinematic = -1;
 		uiInfo.mapList[uiInfo.mapCount].mapLoadName = String_Alloc( Info_ValueForKey( ui_arenaInfos[n], "map" ) );
 		uiInfo.mapList[uiInfo.mapCount].mapName = String_Alloc( Info_ValueForKey( ui_arenaInfos[n], "longname" ) );
@@ -192,7 +254,16 @@ void UI_LoadArenasIntoMapList( void ) {
 		uiInfo.mapList[uiInfo.mapCount].imageName = String_Alloc( va( "levelshots/%s", uiInfo.mapList[uiInfo.mapCount].mapLoadName ) );
 		uiInfo.mapList[uiInfo.mapCount].typeBits = 0;
 
-		// if no type specified, it will be treated as "ffa"
+		type = Info_ValueForKey( ui_arenaInfos[n], "type" );
+		// if no type specified, it will be treated as "single player"
+		if ( *type ) {
+			if ( strstr( type, "sv_normal" ) ) {
+				uiInfo.mapList[uiInfo.mapCount].typeBits |= ( 1 << GT_SURVIVAL );
+			}
+		} else {
+			uiInfo.mapList[uiInfo.mapCount].typeBits |= ( 1 << GT_SINGLE_PLAYER );
+		}
+
 		uiInfo.mapCount++;
 		if ( uiInfo.mapCount >= MAX_MAPS ) {
 			break;
@@ -311,4 +382,25 @@ char *UI_GetBotNameByNumber( int num ) {
 		return Info_ValueForKey( info, "name" );
 	}
 	return "Sarge";
+}
+
+
+int UI_ParseArenaEnemiesType( const char *arenaInfo ) {
+	const char *e = Info_ValueForKey( arenaInfo, "enemies" );
+
+	if ( !e || !*e ) {
+		// No enemies key: treat as "all" (visible under any filter)
+		return SV_ENEMIES_FILTER_ALL;
+	}
+
+	if ( !Q_stricmp( e, "human" ) ) {
+		return SV_ENEMIES_FILTER_HUMAN;
+	}
+
+	if ( !Q_stricmp( e, "undead" ) ) {
+		return SV_ENEMIES_FILTER_UNDEAD;
+	}
+
+	// Unknown value – safest is to treat as "all"
+	return SV_ENEMIES_FILTER_ALL;
 }

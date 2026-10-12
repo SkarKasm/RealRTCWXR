@@ -218,11 +218,14 @@ typedef enum {
 
 	CG_GETMODELINFO,
 
+	CG_S_STARTSOUNDVCONTROL,
+	CG_R_INPVS,
 	CG_HAPTIC,
 
 	// New in IORTCW
 	CG_ALLOC = 900,
 
+	CG_R_REGISTERSMARTSKIN,
 	// RealRTCW XR: brackets the 2D that belongs in the VR HUD buffer
 	CG_R_BEGINHUD = 910,
 	CG_R_ENDHUD
@@ -280,6 +283,9 @@ typedef enum {
 
 	CG_GET_TAG,
 //	qboolean CG_GetTag( int clientNum, char *tagname, orientation_t *or );
+
+    CG_JOYSTICK_EVENT,
+// void CG_JoystickEvent( int axis, int value );
 
 	MAX_CGAME_EXPORT
 

@@ -35,6 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "g_local.h"
+#include "g_survival.h"
 #include "bg_local.h"
 
 #include <VrClientInfo.h>
@@ -1715,8 +1716,7 @@ void Fire_Lead( gentity_t *ent, gentity_t *activator, float spread, int damage, 
 	}
 
 	if ( traceEnt->takedamage ) {
-		G_Damage( traceEnt, ent, ent, forward, tr.endpos,
-				  damage, 0, MOD_MACHINEGUN );
+    G_Damage(traceEnt, ent, activator, forward, tr.endpos, damage, 0, MOD_MACHINEGUN);
 	}
 
 	if ( !Q_stricmp( ent->classname, "misc_mg42" ) ) {
@@ -1842,9 +1842,9 @@ void clamp_hweapontofirearc( gentity_t *self, gentity_t *other, vec3_t dang ) {
 
 	if ( other && clamped ) {
 		if (other && other->r.svFlags & SVF_CASTAI) {
-			// we only do this to keep the input angles close to the weapon, this doesn't actually
-			// effect the view
-			SetClientViewAngle(other, dang);
+		// we only do this to keep the input angles close to the weapon, this doesn't actually
+		// effect the view
+		SetClientViewAngle( other, dang );
 		}
 
 		//if they are an AI, they should dismount now
@@ -1964,16 +1964,16 @@ void mg42_touch( gentity_t *self, gentity_t *other, trace_t *trace ) {
 		}
 
 		if (other->r.svFlags & SVF_CASTAI) {
-			// clamp the mg42 to fire arc
-			VectorCopy(other->client->ps.viewangles, self->TargetAngles);
+		// clamp the mg42 to fire arc
+		VectorCopy( other->client->ps.viewangles, self->TargetAngles );
 		}
 
 		clamp_hweapontofirearc( self, other, dang );
 
 		if (other->r.svFlags & SVF_CASTAI) 
 		{
-			// clamp player behind the gun
-			clamp_playerbehindgun(self, other, dang);
+		// clamp player behind the gun
+		clamp_playerbehindgun( self, other, dang );
 		}
 
 		VectorCopy( dang, self->TargetAngles );
@@ -2015,14 +2015,14 @@ void mg42_track( gentity_t *self, gentity_t *other ) {
 				}
 				else
 				{
-					AngleVectors(self->s.apos.trBase, forward, right, up);
+				AngleVectors( self->s.apos.trBase, forward, right, up );
 				}
 				VectorCopy( self->s.pos.trBase, muzzle );
 
 				if ( !Q_stricmp( self->classname, "misc_mg42" ) ) {
 					VectorMA( muzzle, 16, forward, muzzle );
 					if (self->r.svFlags & SVF_CASTAI) {
-						VectorMA(muzzle, 16, up, muzzle);
+					VectorMA( muzzle, 16, up, muzzle );
 					}
 					validshot = qtrue;
 				} else if ( !Q_stricmp( self->classname, "misc_flak" ) )       {
@@ -2061,32 +2061,47 @@ void mg42_track( gentity_t *self, gentity_t *other ) {
 				// snap to integer coordinates for more efficient network bandwidth usage
 				SnapVector( muzzle );
 
-				if ( validshot ) {
-					if ( !( other->r.svFlags & SVF_CASTAI ) ) {
-						if ( is_flak ) {
-							Fire_Lead( self, other, FLAK_SPREAD, FLAK_DAMAGE, muzzle, self->s.apos.trBase );
-						} else
-						{
-							Fire_Lead( self, other, ammoTable[WP_DUMMY_MG42].spread, ammoTable[WP_DUMMY_MG42].playerDamage, muzzle, self->s.apos.trBase );
-						}
-					} else
+				if (g_gametype.integer == GT_SURVIVAL)
+				{
+					if (!Survival_TrySpendMG42Points(other))
 					{
-						if ( self->damage ) {
-							Fire_Lead( self, other, ammoTable[WP_DUMMY_MG42].spread / self->accuracy, self->damage, muzzle, self->s.apos.trBase );
-						} else {
-							Fire_Lead( self, other, ammoTable[WP_DUMMY_MG42].spread / self->accuracy, ammoTable[WP_DUMMY_MG42].aiDamage, muzzle, self->s.apos.trBase );
-						}
+						return;
+					}
+				}
 
+				// Now proceed as usual for both survival (with enough points) and non-survival
+				if (validshot)
+				{
+					if (!(other->r.svFlags & SVF_CASTAI))
+					{
+						if (is_flak)
+						{
+							Fire_Lead(self, other, FLAK_SPREAD, FLAK_DAMAGE, muzzle, self->s.apos.trBase);
+						}
+						else
+						{
+							Fire_Lead(self, other, ammoTable[WP_DUMMY_MG42].spread, ammoTable[WP_DUMMY_MG42].playerDamage, muzzle, self->s.apos.trBase);
+						}
+					}
+					else
+					{
+						if (self->damage)
+						{
+							Fire_Lead(self, other, ammoTable[WP_DUMMY_MG42].spread / self->accuracy, self->damage, muzzle, self->s.apos.trBase);
+						}
+						else
+						{
+							Fire_Lead(self, other, ammoTable[WP_DUMMY_MG42].spread / self->accuracy, ammoTable[WP_DUMMY_MG42].aiDamage, muzzle, self->s.apos.trBase);
+						}
 					}
 
-					// play character anim
-					BG_AnimScriptEvent( &other->client->ps, ANIM_ET_FIREWEAPON, qfalse, qtrue );
+					BG_AnimScriptEvent(&other->client->ps, ANIM_ET_FIREWEAPON, qfalse, qtrue);
 
 					if (self->r.svFlags & SVF_CASTAI) {
 						other->client->ps.viewlocked = 2; // this enable screen jitter when firing
-					}
 				}
 			}
+		}
 		}
 
 		// move to the position over the next frame
@@ -2362,8 +2377,14 @@ void mg42_spawn( gentity_t *ent ) {
 			base->r.svFlags = SVF_USE_CURRENT_ORIGIN;
 			base->s.eType = ET_GENERAL;
 
-
-			base->s.modelindex = G_ModelIndex( "models/mapobjects/weapons/mg42b.md3" );
+			if (g_vanilla_guns.integer)
+			{
+				base->s.modelindex = G_ModelIndex("models/mapobjects/weapons/mg42b.md3");
+			}
+			else
+			{
+				base->s.modelindex = G_ModelIndex("models/mapobjects/weapons/mg42b_hd.md3");
+			}
 		}
 
 		VectorSet( base->r.mins, -8, -8, -8 );
@@ -2398,7 +2419,14 @@ void mg42_spawn( gentity_t *ent ) {
 	//gun->s.dmgFlags = HINT_MG42;	// identify this for cursorhints
 
 	gun->touch = mg42_touch;
-	gun->s.modelindex = G_ModelIndex( "models/mapobjects/weapons/mg42a.md3" );
+	if (g_vanilla_guns.integer)
+	{
+		gun->s.modelindex = G_ModelIndex("models/mapobjects/weapons/mg42a.md3");
+	}
+	else
+	{
+		gun->s.modelindex = G_ModelIndex("models/mapobjects/weapons/mg42a_hd.md3");
+	}
 	VectorCopy( ent->s.origin, offset );
 	offset[2] += 24;
 	G_SetOrigin( gun, offset );

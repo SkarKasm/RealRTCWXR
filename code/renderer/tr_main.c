@@ -915,16 +915,16 @@ void R_SetupProjection(viewParms_t* dest, float zProj, float zFar, qboolean comp
 
 	dest->projectionMatrix[1] = 0;
 	dest->projectionMatrix[5] = 2 * zProj / height;
-	dest->projectionMatrix[9] = (ymax + ymin) / height;	// normally 0
+	dest->projectionMatrix[9] = ( ymax + ymin ) / height;	// normally 0
 	dest->projectionMatrix[13] = 0;
 
 	dest->projectionMatrix[3] = 0;
 	dest->projectionMatrix[7] = 0;
 	dest->projectionMatrix[11] = -1;
 	dest->projectionMatrix[15] = 0;
-
+	
 	// Now that we have all the data for the projection matrix we can also setup the view frustum.
-	if (computeFrustum)
+	if(computeFrustum)
 		R_SetupFrustumOriginal(dest, xmin, xmax, ymax, zProj, zFar, stereoSep);
 }
 
@@ -1410,25 +1410,25 @@ R_Radix
 */
 static ID_INLINE void R_Radix( int byte, int size, drawSurf_t *source, drawSurf_t *dest )
 {
-  int           count[ 256 ] = { 0 };
-  int           index[ 256 ];
-  int           i;
-  unsigned char *sortKey = NULL;
-  unsigned char *end = NULL;
+    int           count[256] = {0};
+    int           index[256];
+    int           i;
+    unsigned char *sortKey = NULL;
+    unsigned char *end = NULL;
 
-  sortKey = ( (unsigned char *)&source[ 0 ].sort ) + byte;
-  end = sortKey + ( size * sizeof( drawSurf_t ) );
-  for( ; sortKey < end; sortKey += sizeof( drawSurf_t ) )
-    ++count[ *sortKey ];
+    // Note: byte is the byte index within the 64-bit key.
+    sortKey = ((unsigned char *)&source[0].sort) + byte;
+    end     = sortKey + (size * sizeof(drawSurf_t));
+    for (; sortKey < end; sortKey += sizeof(drawSurf_t))
+        ++count[*sortKey];
 
-  index[ 0 ] = 0;
+    index[0] = 0;
+    for (i = 1; i < 256; ++i)
+        index[i] = index[i - 1] + count[i - 1];
 
-  for( i = 1; i < 256; ++i )
-    index[ i ] = index[ i - 1 ] + count[ i - 1 ];
-
-  sortKey = ( (unsigned char *)&source[ 0 ].sort ) + byte;
-  for( i = 0; i < size; ++i, sortKey += sizeof( drawSurf_t ) )
-    dest[ index[ *sortKey ]++ ] = source[ i ];
+    sortKey = ((unsigned char *)&source[0].sort) + byte;
+    for (i = 0; i < size; ++i, sortKey += sizeof(drawSurf_t))
+        dest[index[*sortKey]++] = source[i];
 }
 
 /*
@@ -1438,20 +1438,29 @@ R_RadixSort
 Radix sort with 4 byte size buckets
 ===============
 */
-static void R_RadixSort( drawSurf_t *source, int size )
+static void R_RadixSort( drawSurf_t* source, int size )
 {
-  static drawSurf_t scratch[ MAX_DRAWSURFS ];
+    static drawSurf_t scratch[MAX_DRAWSURFS];
+
 #ifdef Q3_LITTLE_ENDIAN
-  R_Radix( 0, size, source, scratch );
-  R_Radix( 1, size, scratch, source );
-  R_Radix( 2, size, source, scratch );
-  R_Radix( 3, size, scratch, source );
+    R_Radix( 0, size, source, scratch );
+    R_Radix( 1, size, scratch, source );
+    R_Radix( 2, size, source, scratch );
+    R_Radix( 3, size, scratch, source );
+    R_Radix( 4, size, source, scratch );
+    R_Radix( 5, size, scratch, source );
+    R_Radix( 6, size, source, scratch );
+    R_Radix( 7, size, scratch, source );
 #else
-  R_Radix( 3, size, source, scratch );
-  R_Radix( 2, size, scratch, source );
-  R_Radix( 1, size, source, scratch );
-  R_Radix( 0, size, scratch, source );
-#endif //Q3_LITTLE_ENDIAN
+    R_Radix( 7, size, source, scratch );
+    R_Radix( 6, size, scratch, source );
+    R_Radix( 5, size, source, scratch );
+    R_Radix( 4, size, scratch, source );
+    R_Radix( 3, size, source, scratch );
+    R_Radix( 2, size, scratch, source );
+    R_Radix( 1, size, scratch, source );
+    R_Radix( 0, size, scratch, source );
+#endif
 }
 
 //==========================================================================================
@@ -1461,21 +1470,23 @@ static void R_RadixSort( drawSurf_t *source, int size )
 R_AddDrawSurf
 =================
 */
-void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader,
-					int fogIndex, int dlightMap, int atiTess ) {
-	int index;
+void R_AddDrawSurf( surfaceType_t* surface, shader_t* shader, int fogIndex, int dlightMap, int atiTess )
+{
+    int index = tr.refdef.numDrawSurfs & DRAWSURF_MASK;
 
-	// instead of checking for overflow, we just mask the index
-	// so it wraps around
-	index = tr.refdef.numDrawSurfs & DRAWSURF_MASK;
-	// the sort data is packed into a single 32 bit value so it can be
-	// compared quickly during the qsorting process
-// GR - add tesselation flag to the sort
-	tr.refdef.drawSurfs[index].sort = ( shader->sortedIndex << QSORT_SHADERNUM_SHIFT )
-									  | ( atiTess << QSORT_ATI_TESS_SHIFT )
-									  | tr.shiftedEntityNum | ( fogIndex << QSORT_FOGNUM_SHIFT ) | (int)dlightMap;
-	tr.refdef.drawSurfs[index].surface = surface;
-	tr.refdef.numDrawSurfs++;
+    // Build 64-bit sort key
+    uint64_t sort = 0;
+    sort |= ((uint64_t)(dlightMap) & QSORT_DLIGHTMAP_MASK) << QSORT_DLIGHTMAP_SHIFT;
+    sort |= ((uint64_t)(fogIndex)   & QSORT_FOGNUM_MASK)   << QSORT_FOGNUM_SHIFT;
+    sort |= ((uint64_t)(atiTess & 1))                     << QSORT_ATI_TESS_SHIFT;
+    // tr.shiftedEntityNum should already be pre-shifted to QSORT_REFENTITYNUM_SHIFT; if not, shift it here:
+    // sort |= ((uint64_t)entityNum & REFENTITYNUM_MASK) << QSORT_REFENTITYNUM_SHIFT;
+	sort |= (uint64_t)tr.shiftedEntityNum;
+    sort |= ((uint64_t)shader->sortedIndex & QSORT_SHADERNUM_MASK) << QSORT_SHADERNUM_SHIFT;
+
+    tr.refdef.drawSurfs[index].sort    = sort;
+    tr.refdef.drawSurfs[index].surface = surface;
+    tr.refdef.numDrawSurfs++;
 }
 
 /*
@@ -1484,15 +1495,18 @@ R_DecomposeSort
 =================
 */
 // GR - decompose  with tessellation flag
-void R_DecomposeSort( unsigned sort, int *entityNum, shader_t **shader,
-					  int *fogNum, int *dlightMap, int *atiTess ) {
-	*fogNum = ( sort >> QSORT_FOGNUM_SHIFT ) & 31;
-	*shader = tr.sortedShaders[ ( sort >> QSORT_SHADERNUM_SHIFT ) & ( MAX_SHADERS - 1 ) ];
-//	*entityNum = ( sort >> QSORT_REFENTITYNUM_SHIFT ) & ( MAX_GENTITIES - 1 );   // (SA) uppded entity count for Wolf to 11 bits
-	*entityNum = ( sort >> QSORT_REFENTITYNUM_SHIFT ) & REFENTITYNUM_MASK;
-	*dlightMap = sort & 3;
-//GR - extract tessellation flag
-	*atiTess = ( sort >> QSORT_ATI_TESS_SHIFT ) & 1;
+void R_DecomposeSort( uint64_t sort, int* entityNum, shader_t** shader, int* fogNum, int* dlightMap, int* atiTess )
+{
+    *dlightMap = (int)((sort >> QSORT_DLIGHTMAP_SHIFT) & QSORT_DLIGHTMAP_MASK);
+    *fogNum    = (int)((sort >> QSORT_FOGNUM_SHIFT)   & QSORT_FOGNUM_MASK);
+    *atiTess   = (int)((sort >> QSORT_ATI_TESS_SHIFT) & 1ull);
+
+    // Shader index
+    uint64_t shaderIdx = (sort >> QSORT_SHADERNUM_SHIFT) & QSORT_SHADERNUM_MASK;
+    *shader = tr.sortedShaders[ shaderIdx & (MAX_SHADERS - 1) ];
+
+    // Entity
+    *entityNum = (int)((sort >> QSORT_REFENTITYNUM_SHIFT) & REFENTITYNUM_MASK);
 }
 
 /*
@@ -1568,7 +1582,8 @@ void R_AddEntitySurfaces( void ) {
 		ent->needDlights = qfalse;
 
 		// preshift the value we are going to OR into the drawsurf sort
-		tr.shiftedEntityNum = tr.currentEntityNum << QSORT_REFENTITYNUM_SHIFT;
+		tr.shiftedEntityNum =
+			((uint64_t)(tr.currentEntityNum) & REFENTITYNUM_MASK) << QSORT_REFENTITYNUM_SHIFT;
 
 		//
 		// the weapon model must be handled special --

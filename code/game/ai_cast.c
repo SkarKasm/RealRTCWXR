@@ -45,6 +45,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "../botlib/botai.h"          //bot ai interface
 
 #include "ai_cast.h"
+#include "g_survival.h"
 
 /*
 The Wolfenstein AI uses the bot movement functions, and goal handling.
@@ -406,6 +407,7 @@ gentity_t *AICast_CreateCharacter( gentity_t *ent, float *attributes, cast_weapo
 	newent->aiTeam = ent->aiTeam;
 	newent->targetname = ent->targetname;
 	newent->canSpeak = ent->canSpeak;
+	newent->oneshot = ent->oneshot;
 	//
 	newent->AIScript_AlertEntity = ent->AIScript_AlertEntity;
 	newent->aiInactive = ent->aiInactive;
@@ -432,8 +434,14 @@ gentity_t *AICast_CreateCharacter( gentity_t *ent, float *attributes, cast_weapo
 	} else {
 		newent->health = client->ps.stats[STAT_HEALTH] = client->ps.stats[STAT_MAX_HEALTH] = cs->attributes[STARTING_HEALTH];
 	}
-
-	cs->respawnsleft = g_airespawn.integer;
+    
+	// Unlimited respawn in Survival mode (unless entity is oneshot)
+	if ( g_gametype.integer == GT_SURVIVAL && !ent->oneshot ) {
+		AICast_ApplySurvivalAttributes( newent, cs );
+		AICast_CreateCharacter_Survival( newent, cs );
+	} else {
+		cs->respawnsleft = g_airespawn.integer;
+	}
 	//
 	cs->weaponInfo = weaponInfo;
 	//
@@ -482,15 +490,19 @@ void AICast_Init( void ) {
 	numSpawningCast = 0;
 	saveGamePending = qtrue;
 
+	// g_level_was_selected gets consumed by the map script whether or not a checkpoint actually saves; keep our own copy
+	if ( trap_Cvar_VariableIntegerValue( "g_level_was_selected" ) ) {
+		trap_Cvar_Set( "g_levelSelectPending", "1" );
+	}
+	trap_Cvar_Set( "g_checkpointReady", "0" );
+
+	if (g_gametype.integer == GT_SURVIVAL) {
+		AICast_InitSurvival();
+	}
+
 	trap_Cvar_Register( &aicast_debug, "aicast_debug", "0", 0 );
 	trap_Cvar_Register( &aicast_debugname, "aicast_debugname", "", 0 );
 	trap_Cvar_Register( &aicast_scripts, "aicast_scripts", "1", 0 );
-
-	// (aicast_thinktime / sv_fps) * aicast_maxthink = number of cast's to think between each aicast frame
-	// so..
-	// (100 / 20) * 6 = 30
-	//
-	// so if the level has more than 30 AI cast's, they could start to bunch up, resulting in slower thinks
 
 	trap_Cvar_Register( &cvar, "aicast_thinktime", "50", 0 );
 	aicast_thinktime = trap_Cvar_VariableIntegerValue( "aicast_thinktime" );
@@ -500,22 +512,13 @@ void AICast_Init( void ) {
 
 	aicast_maxclients = trap_Cvar_VariableIntegerValue( "sv_maxclients" );
 
-	aicast_skillscale = (float)trap_Cvar_VariableIntegerValue( "g_gameSkill" ) / (float)GSKILL_REALISM;
+	aicast_skillscale = (float)trap_Cvar_VariableIntegerValue( "g_gameSkill" ) / (float)GSKILL_SURVIVAL;
 
 	caststates = G_Alloc( aicast_maxclients * sizeof( cast_state_t ) );
 	memset( caststates, 0, sizeof( *caststates ) );
 	for ( i = 0; i < MAX_CLIENTS; i++ ) {
 		caststates[i].entityNum = i;
 	}
-
-/* RF, this is useless, since the AAS hasnt been loaded yet
-	// try and load in the AAS now, so we can interact with it during spawning of entities
-	i = 0;
-	trap_AAS_SetCurrentWorld( 0 );
-	while ( !trap_AAS_Initialized() && ( i++ < 10 ) ) {
-		trap_BotLibStartFrame( (float) level.time / 1000 );
-	}
-*/
 }
 
 /*
@@ -585,6 +588,12 @@ AIChar_AIScript_AlertEntity
 ============
 */
 void AIChar_AIScript_AlertEntity( gentity_t *ent ) {
+
+	if (g_gametype.integer == GT_SURVIVAL  && !ent->oneshot) {
+		AIChar_AIScript_AlertEntity_Survival(ent);
+		return;
+	}
+
 	vec3_t mins, maxs;
 	int numTouch, touch[10], i;
 	cast_state_t    *cs;
@@ -769,6 +778,8 @@ void AICast_CheckLoadGame( void ) {
 			trap_Cvar_Set( "savegame_loading", "0" ); // in-case it aborts
 			saveGamePending = qfalse;
 			G_LoadGame( NULL );		// always load the "current" savegame
+			trap_Cvar_Set( "g_checkpointReady", "1" );
+			trap_Cvar_Set( "g_levelSelectPending", "0" );
 //			trap_Cvar_Set( "cg_norender", "0" );
 
 			// RF, spawn a thinker that will enable rendering after the client has had time to process the entities and setup the display

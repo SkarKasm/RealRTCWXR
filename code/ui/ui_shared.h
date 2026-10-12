@@ -439,7 +439,7 @@ typedef struct {
 	char *localname;
 } translateString_t;
 
-#define MAX_TRANSLATESTRINGS 64
+#define MAX_TRANSLATESTRINGS 128
 extern translateString_t translateStrings[MAX_TRANSLATESTRINGS];
 
 //----(SA)	end
@@ -454,6 +454,7 @@ extern bonusString_t bonusStrings[MAX_BONUSSTRINGS];
 
 
 const char *String_Alloc( const char *p );
+const char *TranslateTable_Find( const char *original );
 void String_Init( void );
 void String_Report( void );
 void Init_Display( displayContextDef_t *dc );

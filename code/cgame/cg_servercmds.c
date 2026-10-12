@@ -149,6 +149,7 @@ void CG_ParseServerinfo( void ) {
 	trap_Cvar_Set( "g_engineerChargeTime",Info_ValueForKey( info,"g_engineerChargeTime" ) );
 	trap_Cvar_Set( "g_soldierChargeTime",Info_ValueForKey( info,"g_soldierChargeTime" ) );
 	trap_Cvar_Set( "g_LTChargeTime",Info_ValueForKey( info,"g_LTChargeTime" ) );
+	trap_Cvar_Set( "g_cvopsChargeTime",Info_ValueForKey( info,"g_cvopsChargeTime" ) );
 	trap_Cvar_Set( "g_redlimbotime",Info_ValueForKey( info,"g_redlimbotime" ) );
 	trap_Cvar_Set( "g_bluelimbotime",Info_ValueForKey( info,"g_bluelimbotime" ) );
 // jpw
@@ -395,6 +396,11 @@ static void CG_ConfigStringModified( void ) {
 		cgs.scores2 = atoi( str );
 	} else if ( num == CS_LEVEL_START_TIME ) {
 		cgs.levelStartTime = atoi( str );
+	} else if ( num == CS_TIMEDILATION ) {
+		cgs.timeDilation = (float)atof( str );
+		if ( cgs.timeDilation <= 0.0f ) {
+			cgs.timeDilation = 1.0f;
+		}
 	} else if ( num == CS_VOTE_TIME ) {
 		cgs.voteTime = atoi( str );
 		cgs.voteModified = qtrue;
@@ -615,6 +621,8 @@ static void CG_MapRestart( void ) {
 	memset( &cg.lastWeapSelInBank[0], 0, MAX_WEAP_BANKS * sizeof( int ) );  // clear weapon bank selections
 
 	cg.centerPrintTime = 0; // reset centerprint counter so previous messages don't re-appear
+	cg.buyPrintTime = 0; // reset centerprint counter so previous messages don't re-appear
+	cg.egPrintTime = 0; // reset centerprint counter so previous messages don't re-appear
 	cg.subtitlePrintTime = 0; // reset subtitleprint counter so previous messages don't re-appear
 	cg.itemPickupTime = 0;  // reset item pickup counter so previous messages don't re-appear
 	cg.cursorHintFade = 0;  // reset cursor hint timer
@@ -823,6 +831,37 @@ static void CG_ServerCommand( void ) {
 		return;
 	}
 
+	if (!strcmp(cmd, "egp"))
+	{
+		const char *key = CG_Argv(1);
+		const char *trans = NULL;
+		char formatted[1024];
+		int argc = trap_Argc();
+
+		trans = CG_translateString(key);
+
+		if (argc >= 4)
+		{											  // egp key num1 num2
+			Com_sprintf(formatted, sizeof(formatted), // RealRTCW uses Com_sprintf, NOT Q_snprintf
+						trans,
+						atoi(CG_Argv(2)),
+						atoi(CG_Argv(3)));
+		}
+		else
+		{
+			Q_strncpyz(formatted, trans, sizeof(formatted));
+		}
+
+		// Use the same Y position and width as the original code had before
+		CG_EndGamePrint(formatted, SCREEN_HEIGHT - (SCREEN_HEIGHT * 0.25), SMALLCHAR_WIDTH);
+		return;
+	}
+
+	if ( !strcmp( cmd, "cpbuy" ) ) {
+		CG_BuyPrint( CG_Argv( 1 ), SCREEN_HEIGHT - ( SCREEN_HEIGHT * 0.25 ), SMALLCHAR_WIDTH );
+		return;
+	}
+
 	if ( !strcmp( cmd, "cptop" ) ) {
 		CG_CenterPrint( CG_Argv( 1 ), SCREEN_HEIGHT - ( SCREEN_HEIGHT * 0.90 ), 9 );
 		return;
@@ -849,6 +888,14 @@ static void CG_ServerCommand( void ) {
 			trap_S_StartLocalSound( cgs.media.votePassed, CHAN_ANNOUNCER );
 		}
 #endif
+		return;
+	}
+
+	if ( !strcmp( cmd, "hitMarker" ) ) {
+		const char *key = CG_Argv( 1 );
+		int num = atoi(key);
+		hitEvent_t hitType = ( num >= HIT_NONE && num < HIT_MAX_NUM ) ? (hitEvent_t)num : HIT_NONE;
+		CG_HitMarker( hitType );
 		return;
 	}
 

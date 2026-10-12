@@ -1824,6 +1824,7 @@ refexport_t *GetRefAPI( int apiVersion, refimport_t *rimp, vr_client_info_t * pv
 	re.BeginRegistration = RE_BeginRegistration;
 	re.RegisterModel    = RE_RegisterModel;
 	re.RegisterSkin     = RE_RegisterSkin;
+	re.RegisterSmartSkin = RE_RegisterSmartSkin;
 //----(SA) added
 	re.GetSkinModel         = RE_GetSkinModel;
 	re.GetShaderFromModel   = RE_GetShaderFromModel;

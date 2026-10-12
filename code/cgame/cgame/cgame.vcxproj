@@ -254,9 +254,9 @@
     <ClCompile Include="..\cg_particles.c" />
     <ClCompile Include="..\cg_players.c" />
     <ClCompile Include="..\cg_playerstate.c" />
-    <ClCompile Include="..\cg_polybus.c" />
     <ClCompile Include="..\cg_predict.c" />
     <ClCompile Include="..\cg_scoreboard.c" />
+    <ClCompile Include="..\cg_speakerscript.c" />
     <ClCompile Include="..\cg_servercmds.c" />
     <ClCompile Include="..\cg_snapshot.c" />
     <ClCompile Include="..\cg_sound.c" />

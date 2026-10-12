@@ -66,11 +66,11 @@ If you have questions concerning this license or the applicable additional terms
   #define CLIENT_WINDOW_TITLE     	"RealRTCW"
   #define CLIENT_WINDOW_MIN_TITLE 	"RealRTCW" //iowolfsp
 #ifdef USE_XDG
-  #define HOMEPATH_NAME_UNIX		"RealRTCW\\5.0"
+  #define HOMEPATH_NAME_UNIX		"RealRTCW"
 #else
   #define HOMEPATH_NAME_UNIX		".realrtcw"
 #endif
-  #define HOMEPATH_NAME_WIN		"RealRTCW\\5.0"
+  #define HOMEPATH_NAME_WIN		"RealRTCW"
   #define STEAMPATH_NAME		"Return To Castle Wolfenstein"
   #define STEAMPATH_APPID		"9010"
 
@@ -79,7 +79,7 @@ If you have questions concerning this license or the applicable additional terms
   #define HOMEPATH_NAME_MACOSX		HOMEPATH_NAME_WIN
   #define GAMENAME_FOR_MASTER		"wolfsp"
   #define CINEMATICS_LOGO		"gmlogo.RoQ"	// non-existent
-  #define CINEMATICS_INTRO		"wolfintro.RoQ"	// SP only
+  #define CINEMATICS_INTRO		"wolfintro.webm"	// SP only
   #define LEGACY_PROTOCOL
 #endif
 
@@ -87,13 +87,15 @@ If you have questions concerning this license or the applicable additional terms
 #define HEARTBEAT_FOR_MASTER		"DarkPlaces"
 #define FLATLINE_FOR_MASTER		"WolfFlatline-1"
 
+#define MAX_MAPS 128
+
 // When com_gamename is LEGACY_MASTER_GAMENAME, use wolfenstein master protocol.
 // You shouldn't change this unless you know what you're doing
 #define LEGACY_MASTER_GAMENAME		"wolfsp"
 #define LEGACY_HEARTBEAT_FOR_MASTER	"Wolfenstein-1"
 
 #ifndef PRODUCT_VERSION
-  #define PRODUCT_VERSION "5.0" // iortcw 1.51
+  #define PRODUCT_VERSION "5.4" // iortcw 1.51
 #endif
 
 #ifndef PRODUCT_DATE
@@ -108,6 +110,8 @@ If you have questions concerning this license or the applicable additional terms
 #define DEMOEXT	"dm_"			// standard demo extension
 
 #ifdef _MSC_VER
+
+
 
 #pragma warning(disable : 4018) // signed/unsigned mismatch
 #pragma warning(disable : 4032)
@@ -217,7 +221,7 @@ typedef int intptr_t;
 extern "C"
 {
 #endif
-	int Q_vsnprintf(char* str, size_t size, const char* format, va_list ap);
+  int Q_vsnprintf(char *str, size_t size, const char *format, va_list ap);
 #ifdef __cplusplus
 }
 #endif
@@ -1021,11 +1025,13 @@ SAVE
 	16 - (SA) added fog
 	17 - (SA) rats, changed fog.
 	18 - TTimo targetdeath fix
+	19 - RealRTCW Save
+	20 - RealRTCW 5.44 - venom pre-spin + slow-mo
 
 ==============================================================
 */
 
-#define SAVE_VERSION    18
+#define SAVE_VERSION    20
 #define SAVE_INFOSTRING_LENGTH  256
 
 
@@ -1357,7 +1363,7 @@ typedef struct accumPrintLabel_s {
 
 // weapon grouping
 #define MAX_WEAP_BANKS      11
-#define MAX_WEAPS_IN_BANK   6
+#define MAX_WEAPS_IN_BANK   10
 // JPW NERVE
 #define MAX_WEAPS_IN_BANK_MP    8
 #define MAX_WEAP_BANKS_MP   7
@@ -1365,10 +1371,13 @@ typedef struct accumPrintLabel_s {
 
 // bit field limits
 #define MAX_STATS               16
-#define MAX_PERSISTANT          16
+#define MAX_PERSISTANT          32
 #define MAX_POWERUPS            16
 #define MAX_WEAPONS             64  // (SA) and yet more!
-#define MAX_HOLDABLE            16
+#define MAX_WEAPON_SLOTS         3 
+#define MAX_WEAPON_SLOTS_SOLDIER 4
+#define MAX_HOLDABLE            32
+#define MAX_PERKS 			    16
 
 // Ridah, increased this
 //#define	MAX_PS_EVENTS			2
@@ -1466,6 +1475,9 @@ typedef struct playerState_s {
 	int holdable[MAX_HOLDABLE];
 	int holding;                        // the current item in holdable[] that is selected (held)
 	int weapons[MAX_WEAPONS / ( sizeof( int ) * 8 )];   // 64 bits for weapons held
+	int weaponSlots[MAX_WEAPON_SLOTS];
+	int weaponSlotsSoldier [MAX_WEAPON_SLOTS_SOLDIER]; 
+	int perks[MAX_PERKS];                // Perks
 
 	// Ridah, allow for individual bounding boxes
 	vec3_t mins, maxs;
@@ -1553,6 +1565,10 @@ typedef struct playerState_s {
 
 	// 1NTERRUPTOR
 	printLabel_t scriptAccumLabel;
+
+	int weaponUpgraded[MAX_WEAPONS]; // 0 = not upgraded, 1 = upgraded
+
+	qboolean simpleZoomed;               // networked mirror of cg.simpleZoomed, so spectators/followers see it too
 
 } playerState_t;
 
@@ -1739,6 +1755,8 @@ typedef struct entityState_s {
 	aistateEnum_t aiState;
 
 	int animMovetype;       // clients can't derive movetype of other clients for anim scripting system
+
+	int perks;
 
 } entityState_t;
 

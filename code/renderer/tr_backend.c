@@ -1139,6 +1139,10 @@ Used for cinematics.
 void RE_StretchRaw( int x, int y, int w, int h, int cols, int rows, const byte *data, int client, qboolean dirty ) {
 	int i, j;
 	int start, end;
+	float s0 = 0.0f;
+	float t0 = 0.0f;
+	float s1 = 1.0f;
+	float t1 = 1.0f;
 
 	if ( !tr.registered ) {
 		return;
@@ -1149,8 +1153,9 @@ void RE_StretchRaw( int x, int y, int w, int h, int cols, int rows, const byte *
 		RB_EndSurface();
 	}
 
-	// we definately want to sync every frame for the cinematics
-	qglFinish();
+	if ( r_finish->integer ) {
+		qglFinish();
+	}
 
 	start = 0;
 	if ( r_speeds->integer ) {
@@ -1162,8 +1167,10 @@ void RE_StretchRaw( int x, int y, int w, int h, int cols, int rows, const byte *
 	}
 	for ( j = 0 ; ( 1 << j ) < rows ; j++ ) {
 	}
-	if ( ( 1 << i ) != cols || ( 1 << j ) != rows ) {
-		ri.Error( ERR_DROP, "Draw_StretchRaw: size not a power of 2: %i by %i", cols, rows );
+	if ( !tr.supportsNPOT ) {
+		if ( ( 1 << i ) != cols || ( 1 << j ) != rows ) {
+			ri.Error( ERR_DROP, "Draw_StretchRaw: size not a power of 2: %i by %i", cols, rows );
+		}
 	}
 
 	RE_UploadCinematic (w, h, cols, rows, data, client, dirty);
@@ -1178,12 +1185,19 @@ void RE_StretchRaw( int x, int y, int w, int h, int cols, int rows, const byte *
 
 	qglColor3f( tr.identityLight, tr.identityLight, tr.identityLight );
 
+	if ( !tr.supportsNPOT ) {
+		s0 = 0.5f / cols;
+		t0 = 0.5f / rows;
+		s1 = (cols - 0.5f) / cols;
+		t1 = (rows - 0.5f) / rows;
+	}
+
 #ifdef USE_OPENGLES
 	GLfloat tex[] = {
-	 0.5f / cols,  0.5f / rows,
-	 ( cols - 0.5f ) / cols ,  0.5f / rows,
-	 ( cols - 0.5f ) / cols, ( rows - 0.5f ) / rows,
-	 0.5f / cols, ( rows - 0.5f ) / rows };
+	 s0,  t0,
+	 s1 ,  t0,
+	 s1, t1,
+	 s0, t1 };
 	GLfloat vtx[] = {
 	 x, y,
 	 x+w, y,
@@ -1204,13 +1218,13 @@ void RE_StretchRaw( int x, int y, int w, int h, int cols, int rows, const byte *
 		qglEnableClientState(GL_COLOR_ARRAY);
 #else
 	qglBegin( GL_QUADS );
-	qglTexCoord2f( 0.5f / cols,  0.5f / rows );
+	qglTexCoord2f( s0,  t0 );
 	qglVertex2f( x, y );
-	qglTexCoord2f( ( cols - 0.5f ) / cols,  0.5f / rows );
+	qglTexCoord2f( s1,  t0 );
 	qglVertex2f( x + w, y );
-	qglTexCoord2f( ( cols - 0.5f ) / cols, ( rows - 0.5f ) / rows );
+	qglTexCoord2f( s1, t1 );
 	qglVertex2f( x + w, y + h );
-	qglTexCoord2f( 0.5f / cols, ( rows - 0.5f ) / rows );
+	qglTexCoord2f( s0, t1 );
 	qglVertex2f( x, y + h );
 	qglEnd();
 #endif
@@ -1219,17 +1233,17 @@ void RE_StretchRaw( int x, int y, int w, int h, int cols, int rows, const byte *
 
 void RE_UploadCinematic( int w, int h, int cols, int rows, const byte *data, int client, qboolean dirty ) {
 
+	if ( GLimp_IsMinimized() ) {
+		return;
+	}
+
 	GL_Bind( tr.scratchImage[client] );
 
 	// if the scratchImage isn't in the format we want, specify it as a new texture
 	if ( cols != tr.scratchImage[client]->width || rows != tr.scratchImage[client]->height ) {
 		tr.scratchImage[client]->width = tr.scratchImage[client]->uploadWidth = cols;
 		tr.scratchImage[client]->height = tr.scratchImage[client]->uploadHeight = rows;
-#ifdef USE_OPENGLES
 		qglTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA, cols, rows, 0, GL_RGBA, GL_UNSIGNED_BYTE, data );
-#else
-		qglTexImage2D( GL_TEXTURE_2D, 0, 3, cols, rows, 0, GL_RGBA, GL_UNSIGNED_BYTE, data );
-#endif
 		qglTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
 		qglTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
 		qglTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, haveClampToEdge ? GL_CLAMP_TO_EDGE : GL_CLAMP );
@@ -1610,38 +1624,38 @@ const void* RB_Flush(const void* data) {
 	const endFrameCommand_t* cmd;
 
 	// finish any 2D drawing if needed
-	if (tess.numIndexes) {
+	if ( tess.numIndexes ) {
 		RB_EndSurface();
 	}
 
 	// texture swapping test
-	if (r_showImages->integer) {
+	if ( r_showImages->integer ) {
 		RB_ShowImages();
 	}
 
 	cmd = (const endFrameCommand_t*)data;
 
 	// we measure overdraw by reading back the stencil buffer and
-// counting up the number of increments that have happened
+	// counting up the number of increments that have happened
 #ifndef USE_OPENGLES
-	if (r_measureOverdraw->integer) {
+	if ( r_measureOverdraw->integer ) {
 		int i;
 		long sum = 0;
-		unsigned char* stencilReadback;
+		unsigned char *stencilReadback;
 
-		stencilReadback = ri.Hunk_AllocateTempMemory(glConfig.vidWidth * glConfig.vidHeight);
-		qglReadPixels(0, 0, glConfig.vidWidth, glConfig.vidHeight, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, stencilReadback);
+		stencilReadback = ri.Hunk_AllocateTempMemory( glConfig.vidWidth * glConfig.vidHeight );
+		qglReadPixels( 0, 0, glConfig.vidWidth, glConfig.vidHeight, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, stencilReadback );
 
-		for (i = 0; i < glConfig.vidWidth * glConfig.vidHeight; i++) {
+		for ( i = 0; i < glConfig.vidWidth * glConfig.vidHeight; i++ ) {
 			sum += stencilReadback[i];
 		}
 
 		backEnd.pc.c_overDraw += sum;
-		ri.Hunk_FreeTempMemory(stencilReadback);
+		ri.Hunk_FreeTempMemory( stencilReadback );
 	}
 #endif
 
-	if (!glState.finishCalled) {
+	if ( !glState.finishCalled ) {
 		//qglFinish();
 	}
 
@@ -1673,7 +1687,16 @@ const void  *RB_SwapBuffers( const void *data ) {
 
 	GLimp_LogComment( "***************** RB_SwapBuffers *****************\n\n\n" );
 
+	if ( fboEnabled ) {
+		// blits tr.mainFbo to the real backbuffer, applying gamma correction -- see tr_arb.c
+		FBO_PostProcess();
+	}
+
 	GLimp_EndFrame();
+
+	if ( fboEnabled ) {
+		FBO_Bind( tr.mainFbo );
+	}
 
 	backEnd.projection2D = qfalse;
 

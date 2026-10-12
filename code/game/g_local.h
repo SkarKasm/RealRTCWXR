@@ -103,6 +103,7 @@ typedef enum {
     RADIUS_SCOPE_ANY,
     RADIUS_SCOPE_CLIENTS,
     RADIUS_SCOPE_NOCLIENTS,
+	RADIUS_SCOPE_AI,
 } RadiusScope;
 
 // door AI sound ranges
@@ -173,7 +174,7 @@ typedef struct
 	char    *animatingParams;
 } g_script_status_t;
 //
-#define G_MAX_SCRIPT_ACCUM_BUFFERS  8
+#define G_MAX_SCRIPT_ACCUM_BUFFERS         8
 #define G_MAX_SCRIPT_GLOBAL_ACCUM_BUFFERS  8
 
 extern int g_scriptGlobalAccumBuffer[G_MAX_SCRIPT_GLOBAL_ACCUM_BUFFERS];
@@ -441,6 +442,17 @@ struct gentity_s {
 	// if working on a post release patch, new variables should ONLY be inserted after this point
 
 	int canSpeak;               // can this entity speak?
+	int price;                 // item price, survival mode
+    char  *buy_item;
+	int isWeapon;    
+	int wave;				   // wave number, survival mode   
+	int lastPainMOD; // last meansOfDeath used in pain function        
+	int oneshot;
+
+	int empDisabledUntil;
+	int empFxUntil;
+	int empAnimState;
+	int empAnimToken; 
 };
 
 // Ridah
@@ -493,6 +505,8 @@ typedef struct {
 	spectatorState_t spectatorState;
 	int spectatorClient;            // for chasecam and follow mode
 	int wins, losses;               // tournament stats
+	int playerType;                
+
 } clientSession_t;
 
 //
@@ -532,6 +546,10 @@ typedef struct {
 	int voteCount;                  // to prevent people from constantly calling votes
 	int teamVoteCount;              // to prevent people from constantly calling votes
 	qboolean teamInfo;              // send team overlay updates?
+
+	int resetStatsConfirmTime;
+
+	qboolean weaponWheelOpen;       // client has told us its weapon wheel UI is open (SP world-slowdown trigger)
 } clientPersistant_t;
 
 
@@ -617,6 +635,7 @@ struct gclient_s {
 	gentity_t   *cameraPortal;              // grapple hook if out
 	vec3_t cameraOrigin;
 
+	int dropWeaponTime;         // JPW NERVE last time a weapon was dropped
 	int limboDropWeapon;         // JPW NERVE weapon to drop in limbo
 	int deployQueueNumber;         // JPW NERVE player order in reinforcement FIFO queue
 	int sniperRifleFiredTime;         // JPW NERVE last time a sniper rifle was fired (for muzzle flip effects)
@@ -628,6 +647,8 @@ struct gclient_s {
 	pmoveExt_t pmext;
 
 	int healthRegenStartTime;
+
+	qboolean hasPurchased;
 };
 
 
@@ -722,6 +743,7 @@ typedef struct {
 	char        *scriptAI;
 	int reloadPauseTime;                // don't think AI/client's until this time has elapsed
 	int reloadDelayTime;                // don't start loading the savegame until this has expired
+	qboolean pendingCheckpointSave;     // checkpoint save deferred until the player's script runs this frame
 
 	int lastGrenadeKick;
 
@@ -762,6 +784,15 @@ typedef struct {
 	// RF, record last time we loaded, so we can hack around sighting issues on reload
 	int lastLoadTime;
 
+	// fretn - maybe not the best place to add this
+	char *maplist[MAX_MAPS];
+
+	qboolean pendingFSGameChange;
+	char nextFSGame[MAX_QPATH];
+
+	float timeDilation;             // current eased world time dilation factor (1.0 = normal)
+	float timeDilationTarget;       // target factor we're easing toward
+
 } level_locals_t;
 
 //extern    qboolean	reloading;				// loading up a savegame
@@ -794,6 +825,13 @@ void Cmd_FollowCycle_f( gentity_t *ent, int dir );
 //
 void G_RunItem( gentity_t *ent );
 void RespawnItem( gentity_t *ent );
+gentity_t *G_DropSpecifiedItem( gentity_t *ent, gitem_t *item, int lifetimeMs, int dropChance );
+
+void CrossThink( gentity_t *timer );
+void CrossBurn( gentity_t *owner, gentity_t *targ );
+
+void EMP_Apply(gentity_t *owner, gentity_t *targ, int durationMs);
+void EMP_ClearFxThink(gentity_t *timer) ;
 
 void UseHoldableItem( gentity_t *ent, int item );
 void PrecacheItem( gitem_t *it );
@@ -808,6 +846,11 @@ void Fill_Clip( playerState_t *ps, int weapon );
 void    Add_Ammo( gentity_t *ent, int weapon, int count, qboolean fillClip );
 void Touch_Item( gentity_t *ent, gentity_t *other, trace_t *trace );
 qboolean AddMagicAmmo( gentity_t *receiver, int numOfClips );
+
+int G_FindWeaponSlot( gentity_t *other, weapon_t weapon );
+int G_GetFreeWeaponSlot( gentity_t *other );
+void G_DropWeapon( gentity_t *ent, weapon_t weapon );
+qboolean Give_Weapon_New_Inventory( gentity_t *other, weapon_t weapon, qboolean needThrowItem );
 
 // Touch_Item_Auto is bound by the rules of autoactivation (if cg_autoactivate is 0, only touch on "activate")
 void Touch_Item_Auto( gentity_t *ent, gentity_t *other, trace_t *trace );
@@ -866,10 +909,11 @@ void G_ProcessTagConnect( gentity_t *ent, qboolean clearAngles );
 void G_AdjustedDamageVec( gentity_t *ent, vec3_t origin, vec3_t vec );
 qboolean CanDamage( gentity_t *targ, vec3_t origin );
 void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_t dir, vec3_t point, int damage, int dflags, int mod );
+void G_DamageExt( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_t dir, vec3_t point, int damage, int dflags, int mod, int *hitEventType );
 qboolean G_RadiusDamage( vec3_t origin, gentity_t *attacker, float damage, float radius, gentity_t *ignore, int mod );
 qboolean G_RadiusDamage2( vec3_t origin, gentity_t *inflictor, gentity_t *attacker, float damage, float radius, gentity_t *ignore, int mod, RadiusScope scope );
 void body_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int meansOfDeath );
-void TossClientItems( gentity_t *self );
+void TossClientWeapons( gentity_t *self );
 
 // damage flags
 #define DAMAGE_RADIUS               0x00000001  // damage was indirect
@@ -963,6 +1007,7 @@ void BeginIntermission( void );
 void InitBodyQue( void );
 void ClientSpawn( gentity_t *ent );
 void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int mod );
+void player_die_secondchance( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int mod );
 void AddScore( gentity_t *ent, int score );
 void CalculateRanks( void );
 qboolean SpotWouldTelefrag( gentity_t *spot );
@@ -1001,8 +1046,6 @@ void SendScoreboardMessageToAllClients( void );
 void QDECL G_Printf( const char *fmt, ... ) __attribute__ ((format (printf, 1, 2)));
 void QDECL G_DPrintf( const char *fmt, ... ) __attribute__ ((format (printf, 1, 2)));
 void QDECL G_Error( const char *fmt, ... ) __attribute__ ((noreturn, format (printf, 1, 2)));
-//----(SA)	added
-void G_EndGame( void );
 int G_SendMissionStats( void );   // return '0' if objectives not met, '1' if met
 void G_ChangeLevel( char *mapName );
 //----(SA)	end
@@ -1027,6 +1070,7 @@ void G_RunClient( gentity_t *ent );
 // g_team.c
 //
 qboolean OnSameTeam( gentity_t *ent1, gentity_t *ent2 );
+void G_FixupEntityTeamNum( gentity_t *ent );
 
 
 //
@@ -1056,8 +1100,14 @@ void G_QueueBotBegin( int clientNum );
 qboolean G_BotConnect( int clientNum, qboolean restart );
 void Svcmd_AddBot_f( void );
 
+void G_LoadArenas( void );
+
 // ai_cast_characters.c
 void AI_LoadBehaviorTable( AICharacters_t characterNum );
+
+// ai_cast_funcs.c
+void AI_LoadSurvivalTable( const char* mapname );
+qboolean BG_ParseSurvivalTable( int handle );
 
 // ai_main.c
 #define MAX_FILEPATH            144
@@ -1114,6 +1164,8 @@ extern gentity_t       *g_camEnt;
 
 extern vmCvar_t g_gametype;
 
+extern vmCvar_t g_newinventory;
+
 // Rafael gameskill
 extern vmCvar_t g_gameskill;
 // done
@@ -1131,6 +1183,24 @@ extern vmCvar_t g_midgame;
 extern vmCvar_t g_dlc1;
 extern vmCvar_t g_class;
 extern vmCvar_t g_noobTube;
+extern vmCvar_t g_aiCollision;    
+extern vmCvar_t g_level_was_selected;
+extern vmCvar_t g_survivalDifficulty;
+extern vmCvar_t g_survivalBosses;
+
+extern vmCvar_t g_weaponWheelDilation;
+extern vmCvar_t g_weaponWheelDilationRamp;
+
+extern vmCvar_t g_playerSurvivalClass;
+
+extern vmCvar_t g_ee_skinEliteGuard;
+extern vmCvar_t g_ee_skinMercenary;
+extern vmCvar_t g_ee_skinZombie;
+
+extern vmCvar_t g_ee_earlyWeapons;
+extern vmCvar_t g_ee_endgameSwitch;
+extern vmCvar_t g_ee_progress;
+extern vmCvar_t g_ee_svAgent1;
 
 extern vmCvar_t g_reloading;        //----(SA)	added
 
@@ -1206,9 +1276,12 @@ extern vmCvar_t g_medicChargeTime;
 extern vmCvar_t g_engineerChargeTime;
 extern vmCvar_t g_LTChargeTime;
 extern vmCvar_t g_soldierChargeTime;
+extern vmCvar_t g_cvopsChargeTime;
 // jpw
 
 extern vmCvar_t g_playerStart;      //----(SA)	added
+extern vmCvar_t g_checkpointReady;
+extern vmCvar_t g_levelSelectPending;
 
 extern vmCvar_t g_localTeamPref;
 
@@ -1223,8 +1296,11 @@ extern vmCvar_t g_spawnxshepherds;
 extern vmCvar_t g_aicanheadshot;
 extern vmCvar_t g_realism;
 extern vmCvar_t g_regen;
+extern vmCvar_t g_overheal;
 extern vmCvar_t	g_flushItems;
 extern vmCvar_t g_vanilla_guns;
+extern vmCvar_t g_specialWaves;
+extern vmCvar_t g_survivalAiHealthCap;
 
 void	trap_Print( const char *text );
 void	trap_Error( const char *text ) __attribute__((noreturn));
@@ -1450,6 +1526,7 @@ void	*trap_Alloc( int size );
 
 gentity_t* G_FindSmokeBomb( gentity_t* start );
 void G_PoisonGasExplode  ( gentity_t* );
+void G_PoisonGas2Explode  ( gentity_t* );
 
 void G_SetTargetName( gentity_t* ent, char* targetname );
 
@@ -1461,3 +1538,5 @@ typedef enum
 	shard_ceramic,
 	shard_rubble
 } shards_t;
+
+void G_ScheduleEndgame( int delay );

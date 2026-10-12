@@ -799,6 +799,101 @@ void CG_Zoom( void ) {
 	}
 }
 
+float CG_ApplySimpleZoomFov( float currentFovX ) {
+	float baseFovX, targetFovX, f, out;
+	qboolean zoomed;
+	qboolean following = (qboolean)( cg.snap && ( cg.snap->ps.pm_flags & PMF_FOLLOW ) );
+
+	// feature disabled / not set up
+	if ( cg_simpleZoomFov.value <= 0 ) {
+		return currentFovX;
+	}
+
+	// don't interfere with real zoom systems
+	if ( cg.zoomedBinoc || cg.zoomval || ( cg.predictedPlayerState.eFlags & EF_ZOOMING ) ) {
+		return currentFovX;
+	}
+
+	if ( cg.predictedPlayerState.eFlags & EF_DEAD  ) {
+		return currentFovX;
+	}
+
+	// don't allow while using heavy weapon
+	if ( cg.snap && cg.snap->ps.persistant[PERS_HWEAPON_USE] ) {
+		return currentFovX;
+	}
+
+	if ( following ) {
+		// mirror the followed player's networked zoom state instead of our own (disabled) toggle
+		zoomed = (qboolean)cg.predictedPlayerState.simpleZoomed;
+		if ( zoomed != cg.simpleZoomedFollow ) {
+			cg.simpleZoomedFollow = zoomed;
+			cg.simpleZoomTime = cg.time;
+		}
+	} else {
+		zoomed = cg.simpleZoomed;
+		cg.simpleZoomedFollow = qfalse;
+	}
+
+	baseFovX = currentFovX;
+	targetFovX = zoomed ? cg_simpleZoomFov.value : baseFovX;
+
+	// WP_VENOM: spread is too wide for zoom to meaningfully help, so soften the zoom-in
+	if ( zoomed && cg.predictedPlayerState.weapon == WP_VENOM ) {
+		targetFovX = baseFovX + ( targetFovX - baseFovX ) * cg_simpleZoomVenomScale.value;
+	}
+
+	// clamp target
+	if ( targetFovX < 1 ) targetFovX = 1;
+	if ( targetFovX > 160 ) targetFovX = 160;
+
+	// lerp time
+	{
+		int t = cg_simpleZoomTimeMs.integer;
+		int dt = cg.time - cg.simpleZoomTime;
+
+		if ( t <= 0 ) {
+			return targetFovX;
+		}
+		if ( dt < 0 ) dt = 0;
+
+		f = (float)dt / (float)t;
+		if ( f > 1.0f ) f = 1.0f;
+	}
+
+	if ( zoomed ) {
+		// zooming in: base -> target
+		out = baseFovX + f * ( targetFovX - baseFovX );
+	} else {
+		// zooming out: from zoomFov -> base
+		float from = cg_simpleZoomFov.value;
+		if ( from < 1 ) from = 1;
+		if ( from > 160 ) from = 160;
+		out = from + f * ( baseFovX - from );
+	}
+
+	return out;
+}
+
+float CG_FovToTan( float fovDeg ) {
+    return tanf( fovDeg * (float)M_PI / 360.0f );
+}
+
+float CG_FovTanScale( float fovDeg, float baseFovDeg ) {
+    float b = CG_FovToTan( baseFovDeg );
+    if ( b < 0.0001f ) return 1.0f;
+    return CG_FovToTan( fovDeg ) / b;
+}
+
+float CG_CalcWiderFOV(float fov) {
+	// Based on LordHavoc's code for Darkplaces
+	// http://www.quakeworld.nu/forum/topic/53/what-does-your-qw-look-like/page/30
+	const float baseAspect = 0.75f; // 3/4
+	const float aspect = (float)cg.refdef.width/(float)cg.refdef.height;
+
+	return atan2( tan( fov*M_PI / 360.0f ) * baseAspect*aspect, 1 )*360.0f / M_PI;
+}
+
 
 /*
 ====================
@@ -902,15 +997,14 @@ static int CG_CalcFov( void ) {
 		fov_x = 55;
 	}*/
 
-#if 0
-	if ( cg_fixedAspect.integer ) {
-		// Based on LordHavoc's code for Darkplaces
-		// http://www.quakeworld.nu/forum/topic/53/what-does-your-qw-look-like/page/30
-		const float baseAspect = 0.75f; // 3/4
-		const float aspect = (float)cg.refdef.width/(float)cg.refdef.height;
-		const float desiredFov = fov_x;
+	// Simple (CS-style) zoom: client-only FOV tweak, no scope overlay
+	fov_x = CG_ApplySimpleZoomFov(fov_x);
+	float baseFovX = cg.fov;
 
-		fov_x = atan2( tan( desiredFov*M_PI / 360.0f ) * baseAspect*aspect, 1 )*360.0f / M_PI;
+#if 0	// RealRTCW XR: the headset sets the FOV, no aspect correction
+	if ( cg_fixedAspect.integer ) {
+		fov_x = CG_CalcWiderFOV(fov_x);
+		baseFovX = CG_CalcWiderFOV(baseFovX);
 	}
 #endif
 
@@ -918,6 +1012,25 @@ static int CG_CalcFov( void ) {
 	x = cg.refdef.width / tan( fov_x / 360 * M_PI );
 	fov_y = atan2( cg.refdef.height, x );
 	fov_y = fov_y * 360 / M_PI;
+
+	// set it
+	cg.refdef.fov_x = fov_x;
+	cg.refdef.fov_y = fov_y;
+
+	float baseFovY;
+	float xbase;
+
+	// Convert base horizontal fov to base vertical fov using current refdef size
+	// (mirrors the same math used above for fov_y)
+	xbase = cg.refdef.width / tan(baseFovX / 360.0f * M_PI);
+	baseFovY = (atan2(cg.refdef.height, xbase) * 360.0f) / M_PI;
+
+	// Scale based on actual final vertical fov vs base vertical fov
+	cg.zoomSensitivity = CG_FovTanScale(cg.refdef.fov_y, baseFovY);
+
+	// Detect "zoomed state" by FOV actually being smaller than base
+	// (covers scoped zoom, simple zoom, mg42, any other future fov tweak)
+	cg.isZoomed = cg.refdef.fov_y < baseFovY - 0.01f;
 
 	// warp if underwater
 	contents = CG_PointContents( cg.refdef.vieworg, -1 );
@@ -938,29 +1051,6 @@ static int CG_CalcFov( void ) {
 		cg.refdef.rdflags |= RDF_UNDERWATER;
 	} else {
 		cg.refdef.rdflags &= ~RDF_UNDERWATER;
-	}
-
-	// set it
-	cg.refdef.fov_x = fov_x;
-	cg.refdef.fov_y = fov_y;
-
-	if ( !cg.zoomedBinoc ) {
-		// NERVE - SMF - fix for zoomed in/out movement bug
-		if ( cg.zoomval ) {
-			if ( cg.snap->ps.weapon == WP_SNOOPERSCOPE ) {
-				cg.zoomSensitivity = 0.3f * ( cg.zoomval / 90.f );  // NERVE - SMF - changed to get less sensitive as you zoom in;
-			}
-//				cg.zoomSensitivity = 0.2;
-			else {
-				cg.zoomSensitivity = 0.6 * ( cg.zoomval / 90.f );   // NERVE - SMF - changed to get less sensitive as you zoom in
-			}
-//				cg.zoomSensitivity = 0.1;
-		} else {
-			cg.zoomSensitivity = 1;
-		}
-		// -NERVE - SMF
-	} else {
-		cg.zoomSensitivity = cg.refdef.fov_y / 75.0;
 	}
 
 	return inwater;
@@ -1110,15 +1200,15 @@ static int CG_CalcViewValues( void ) {
 
 			if (!vr->immersive_cinematics)
 			{
-				if (cg_fixedAspect.integer) {
-					// Based on LordHavoc's code for Darkplaces
-					// http://www.quakeworld.nu/forum/topic/53/what-does-your-qw-look-like/page/30
-					const float baseAspect = 0.75f; // 3/4
-					const float aspect = (float)cg.refdef.width / (float)cg.refdef.height;
-					const float desiredFov = fov;
-
-					fov = atan2(tan(desiredFov * M_PI / 360.0f) * baseAspect * aspect, 1) * 360.0f / M_PI;
-				}
+			if ( cg_fixedAspect.integer ) {
+				// Based on LordHavoc's code for Darkplaces
+				// http://www.quakeworld.nu/forum/topic/53/what-does-your-qw-look-like/page/30
+				const float baseAspect = 0.75f; // 3/4
+				const float aspect = (float)cg.refdef.width/(float)cg.refdef.height;
+				const float desiredFov = fov;
+		
+				fov = atan2( tan( desiredFov*M_PI / 360.0f ) * baseAspect*aspect, 1 )*360.0f / M_PI;
+			}
 			}
 			else
 			{
@@ -1428,6 +1518,8 @@ void CG_DrawSkyBoxPortal( void ) {
 			fov_x = 55;
 		}*/
 
+		fov_x = CG_ApplySimpleZoomFov(fov_x);
+
 		if ( cg_fixedAspect.integer ) {
 			// Based on LordHavoc's code for Darkplaces
 			// http://www.quakeworld.nu/forum/topic/53/what-does-your-qw-look-like/page/30
@@ -1657,6 +1749,8 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
 	inwater = CG_CalcViewValues();
 	cg.refdef.override_fov |= inwater;
 
+	CG_UpdateAimAssist();
+	
 	CG_CalcShakeCamera();
 
 	//This should be haptic shake, but not camera
@@ -1701,6 +1795,8 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
 
 		CG_AddAtmosphericEffects(); // RealRTCW
 
+		CG_AddScriptSpeakers();
+
 		DEBUGTIME
 
 		CG_AddSmokeSprites();
@@ -1716,7 +1812,7 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
 	else
 	{
 		trap_Cvar_Set("timescale", "1.0");
-		CG_AddViewWeapon(&cg.predictedPlayerState);
+	CG_AddViewWeapon( &cg.predictedPlayerState );
 	}
 
 
@@ -1744,17 +1840,17 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
 	CG_PowerupTimerSounds();
 
 	// make sure the lagometerSample and frame timing isn't done twice when in stereo
-	cg.frametime = cg.time - cg.oldTime;
-	if ( cg.frametime < 0 ) {
-		cg.frametime = 0;
-	}
-	cg.oldTime = cg.time;
-	CG_AddLagometerFrameInfo();
+		cg.frametime = cg.time - cg.oldTime;
+		if ( cg.frametime < 0 ) {
+			cg.frametime = 0;
+		}
+		cg.oldTime = cg.time;
+		CG_AddLagometerFrameInfo();
 
 	DEBUGTIME
 
 	// let the client system know what our weapon, holdable item and zoom settings are
-	trap_SetUserCmdValue( cg.weaponSelect, cg.holdableSelect, cg.zoomSensitivity, cg.cld );
+	trap_SetUserCmdValue( cg.weaponSelect, cg.holdableSelect, cg.zoomSensitivity, cg.cld, cg.isZoomed, cg.aaStrength, cg.aaDYaw, cg.aaDPitch );
 
 	// actually issue the rendering calls
 	CG_DrawActive( stereoView );

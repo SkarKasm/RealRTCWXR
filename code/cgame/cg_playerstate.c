@@ -65,6 +65,7 @@ void CG_CheckAmmo( void ) {
 		if ( cg.snap->ps.ammo[BG_FindAmmoForWeapon( i )] < 0 ) {
 			continue;
 		}
+
 		switch ( i )
 		{
 		case WP_PANZERFAUST:
@@ -88,19 +89,18 @@ void CG_CheckAmmo( void ) {
 		case WP_MP34:
 		case WP_PPSH:
 		case WP_TT33:
-		case WP_P38:
 		case WP_HDM:
 		case WP_MOSIN:
 		case WP_G43:
 	    case WP_M1GARAND:
 		case WP_BAR:
+		case WP_M30:
 		case WP_MP44:
 		case WP_MG42M:
 		case WP_M97:
 		case WP_AUTO5:
 		case WP_REVOLVER:
 		case WP_BROWNING:
-		case WP_M30:
 		case WP_HOLYCROSS:
 		case WP_DELISLE:
 		case WP_M1941:
@@ -284,6 +284,8 @@ void CG_Respawn( void ) {
 	cg.zoomedBinoc = cg.zoomedScope = qfalse;
 	cg.zoomTime = 0;
 	cg.zoomval = 0;
+	cg.simpleZoomed = 0;
+	cg.simpleZoomTime = 0;
 
 	// reset fog to world fog (if present)
 //	trap_R_SetFog(FOG_CMD_SWITCHFOG, FOG_MAP,20,0,0,0,0);

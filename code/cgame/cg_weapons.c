@@ -242,19 +242,18 @@ int CG_WeaponIndex( int weapnum, int *bank, int *cycle );
 static qboolean CG_WeaponHasAmmo( int i );
 static int maxWeapBanks = MAX_WEAP_BANKS, maxWeapsInBank = MAX_WEAPS_IN_BANK; // JPW NERVE
 
-
 int weapBanks[MAX_WEAP_BANKS][MAX_WEAPS_IN_BANK] = {
-	{0,                     0,                      0,            0,               0,            0            },  //	0 (empty)
-	{WP_KNIFE,              WP_DAGGER,              WP_HOLYCROSS, 0,               0,            0            },  //	1
-	{WP_LUGER,              WP_COLT,                WP_TT33,      WP_REVOLVER,     WP_HDM,    WP_P38       },  //	2
-	{WP_MP40,               WP_MP34,                WP_STEN,      WP_THOMPSON,     WP_PPSH,      0            },  //	3
-	{WP_MAUSER,             WP_GARAND,              WP_MOSIN,     WP_DELISLE,      0,            0            },  //	4
-    {WP_G43,                WP_M1GARAND,            WP_M1941,     0,               0,            0            },  //	5
-	{WP_FG42,               WP_MP44,                WP_BAR,       0,               0,            0            },  //	6
-	{WP_M97,                WP_M30,                 WP_AUTO5,     0,               0,            0            },  //	7
-	{WP_GRENADE_LAUNCHER,   WP_GRENADE_PINEAPPLE,   WP_DYNAMITE,  WP_AIRSTRIKE,    WP_POISONGAS, 0            },  //	8
-	{WP_PANZERFAUST,        WP_FLAMETHROWER,        WP_MG42M,     WP_BROWNING,     0,            0            },  //	9
-	{WP_VENOM,              WP_TESLA,               0,            0,               0,            0            }  //	10
+	{0, 0, 0, 0, 0, 0},																						  //	0 (empty)
+	{WP_KNIFE, WP_HOLYCROSS, 0, 0, 0},															  //	1
+	{WP_LUGER, WP_SILENCER, WP_COLT, WP_AKIMBO, WP_TT33, WP_DUAL_TT33, WP_REVOLVER, WP_HDM},				  //	2
+	{WP_MP40, WP_MP34, WP_STEN, WP_THOMPSON, WP_PPSH, 0},													  //	3
+	{WP_MAUSER, WP_GARAND, WP_MOSIN, WP_DELISLE, 0, 0},														  //	4
+	{WP_G43, WP_M1GARAND, WP_M1941, 0, 0, 0},																  //	5
+	{WP_FG42, WP_MP44, WP_BAR, 0, 0, 0},																	  //	6
+	{WP_M97, WP_AUTO5, WP_M30, 0, 0},																	          //	7
+	{WP_GRENADE_LAUNCHER, WP_GRENADE_PINEAPPLE, WP_DYNAMITE, WP_AIRSTRIKE, WP_POISONGAS, WP_SMOKE_BOMB, WP_DYNAMITE_ENG }, //	8
+	{WP_PANZERFAUST, WP_FLAMETHROWER, WP_MG42M, WP_BROWNING, 0, 0},											  //	9
+	{WP_VENOM, WP_TESLA, 0, 0, 0, 0}																		  //	10
 };
 
 // JPW NERVE -- in mutiplayer, characters get knife/special on button 1, pistols on 2, 2-handed on 3
@@ -455,9 +454,9 @@ static void CG_MachineGunEjectBrass( centity_t *cent ) {
 	le->leMarkType = LEMT_NONE;
 }
 
-/*static void CG_MachineGunEjectBrassDelay( centity_t *cent, int delay ) {
+static void CG_MachineGunEjectBrassDelay( centity_t *cent, int delay ) {
 	CG_AllocDelayedBrass( cent, cg.time + delay, CG_MachineGunEjectBrass );
-}*/
+}
 
 /*
 ==============
@@ -644,9 +643,9 @@ static void CG_ShotgunEjectBrass( centity_t *cent ) {
 	le->leMarkType = LEMT_NONE;
 }
 
-/*static void  CG_ShotgunEjectBrassDelay( centity_t *cent, int delay ) {
+static void  CG_ShotgunEjectBrassDelay( centity_t *cent, int delay ) {
 	CG_AllocDelayedBrass( cent, cg.time + delay, CG_ShotgunEjectBrass );
-}*/
+}
 
 /*
 ==============
@@ -833,6 +832,9 @@ static void CG_PistolEjectBrass( centity_t *cent ) {
 	le->leMarkType = LEMT_NONE;
 }
 
+static void CG_PistolEjectBrassDelay( centity_t *cent, int delay ) {
+	CG_AllocDelayedBrass( cent, cg.time + delay, CG_PistolEjectBrass );
+}
 
 //----(SA)	added
 /*
@@ -925,6 +927,11 @@ static void CG_PanzerFaustEjectBrass( centity_t *cent ) {
 
 	le->leMarkType = LEMT_NONE;
 }
+
+static void CG_PanzerFaustEjectBrassDelay( centity_t *cent, int delay ) {
+	CG_AllocDelayedBrass( cent, cg.time + delay, CG_PanzerFaustEjectBrass );
+}
+
 /*
 ==============
 CG_SpearTrail
@@ -1599,7 +1606,7 @@ static qboolean CG_RW_ParseViewType( int handle, weaponInfo_t *weaponInfo, model
 			} else {
 				weaponInfo->weaponModel[viewType].skin[0] = trap_R_RegisterSkin( filename );
 			}
-		}  else if ( !Q_stricmp( token.string, "flashModel" ) ) {
+		} else if ( !Q_stricmp( token.string, "flashModel" ) ) {
 			if ( !PC_String_ParseNoAlloc( handle, filename, sizeof( filename ) ) ) {
 				return CG_RW_ParseError( handle, "expected flashModel filename" );
 			} else {
@@ -1648,6 +1655,8 @@ static qboolean CG_RW_ParseClient( int handle, weaponInfo_t *weaponInfo, int wea
 	int i = 0;
 
 	weaponInfo->reloadFullSound = 0;
+	weaponInfo->reloadFullSoundFast = 0;
+	weaponInfo->reloadSoundFast = 0;
 	weaponInfo->reloadSoundAi = 0;
 	weaponInfo->flashSoundAi[i] = 0;
 
@@ -1687,18 +1696,47 @@ static qboolean CG_RW_ParseClient( int handle, weaponInfo_t *weaponInfo, int wea
 				}
 			}
 		} else if ( !Q_stricmp( token.string, "handsModel" ) ) {
-			if ( !PC_String_ParseNoAlloc( handle, filename, sizeof( filename ) ) ) {
-				return CG_RW_ParseError( handle, "expected handsModel filename" );
+			if (!PC_String_ParseNoAlloc(handle, filename, sizeof(filename)))
+			{
+				return CG_RW_ParseError(handle, "expected handsModel filename");
 			}
-			weaponInfo->handsModel = trap_R_RegisterModel( filename );
-			char handsskin[128]; //eugeny
-			char map[128];
-			memset(handsskin, 0, sizeof(handsskin));
+			weaponInfo->handsModel = trap_R_RegisterModel(filename);
+
+			char base[128], map[128];
+			char smartSkin[128];
+			char handsskin[128], upgradedSkin[128], upgradedMapSkin[128];
+
+			memset(base, 0, sizeof(base));
 			memset(map, 0, sizeof(map));
+			memset(smartSkin, 0, sizeof(smartSkin));
+
+			COM_StripExtension(filename, base, sizeof(base));
 			trap_Cvar_VariableStringBuffer("mapname", map, sizeof(map));
-			COM_StripExtension(filename, filename, sizeof (filename) );
-			Com_sprintf(handsskin, sizeof(handsskin), "%s_%s.skin", filename, map);
-			weaponInfo->handsSkin = trap_R_RegisterSkin(handsskin);
+
+			Com_sprintf(smartSkin, sizeof(smartSkin), "%s.smartskin", base);
+
+			weaponInfo->handsSkin = trap_R_RegisterSmartSkin(smartSkin, map, qfalse);
+			weaponInfo->upgradedSkin = trap_R_RegisterSmartSkin(smartSkin, map, qtrue);
+			weaponInfo->upgradedMapSkin = 0;
+
+			// Legacy fallback
+			if (!weaponInfo->handsSkin)
+			{
+				Com_sprintf(handsskin, sizeof(handsskin), "%s_%s.skin", base, map);
+				weaponInfo->handsSkin = trap_R_RegisterSkin(handsskin);
+			}
+
+			if (!weaponInfo->upgradedSkin)
+			{
+				Com_sprintf(upgradedMapSkin, sizeof(upgradedMapSkin), "%s_upgraded_%s.skin", base, map);
+				weaponInfo->upgradedSkin = trap_R_RegisterSkin(upgradedMapSkin);
+
+				if (!weaponInfo->upgradedSkin)
+				{
+					Com_sprintf(upgradedSkin, sizeof(upgradedSkin), "%s_upgraded.skin", base);
+					weaponInfo->upgradedSkin = trap_R_RegisterSkin(upgradedSkin);
+				}
+			}
 		} else if ( !Q_stricmp( token.string, "flashDlightColor" ) ) {
 			if ( !PC_Vec_Parse( handle, &weaponInfo->flashDlightColor ) ) {
 				return CG_RW_ParseError( handle, "expected flashDlightColor as r g b" );
@@ -1907,13 +1945,13 @@ static qboolean CG_RW_ParseClient( int handle, weaponInfo_t *weaponInfo, int wea
 				return CG_RW_ParseError( handle, "expected ejectBrassFunc" );
 			} else {
 				if ( !Q_stricmp( filename, "MachineGunEjectBrass" ) ) {
-					weaponInfo->ejectBrassFunc = CG_MachineGunEjectBrass;
+					weaponInfo->ejectBrassFunc = CG_MachineGunEjectBrassDelay;
 				} else if ( !Q_stricmp( filename, "PanzerFaustEjectBrass" ) ) {
-					weaponInfo->ejectBrassFunc = CG_PanzerFaustEjectBrass;
+					weaponInfo->ejectBrassFunc = CG_PanzerFaustEjectBrassDelay;
 				} else if ( !Q_stricmp( filename, "PistolEjectBrass" ) ) {
-					weaponInfo->ejectBrassFunc = CG_PistolEjectBrass;
+					weaponInfo->ejectBrassFunc = CG_PistolEjectBrassDelay;
 				} else if ( !Q_stricmp( filename, "ShotgunEjectBrass" ) ) {
-					weaponInfo->ejectBrassFunc = CG_ShotgunEjectBrass;
+					weaponInfo->ejectBrassFunc = CG_ShotgunEjectBrassDelay;
 				}
 			}
 		} else if ( !Q_stricmp( token.string, "modModel" ) ) {
@@ -2033,18 +2071,19 @@ void CG_RegisterWeapon( int weaponNum, qboolean force ) {
 	filename = BG_GetWeaponFilename( weaponNum );
 	if ( !*filename )
 		return;
-
+     
 	if ( cg_vanilla_guns.integer ) {
      	if ( !CG_RegisterWeaponFromWeaponFile( va( "weapons/vanilla/%s", filename ), weaponInfo, weaponNum ) ) {
 		//CG_Printf( S_COLOR_RED "WARNING: failed to register media for weapon %i from %s\n", weaponNum, filename );
 	}
 	} else {
-	if ( !CG_RegisterWeaponFromWeaponFile( va( "weapons/%s", filename ), weaponInfo, weaponNum ) ) {
+	    if ( !CG_RegisterWeaponFromWeaponFile( va( "weapons/%s", filename ), weaponInfo, weaponNum ) ) {
 		//CG_Printf( S_COLOR_RED "WARNING: failed to register media for weapon %i from %s\n", weaponNum, filename );
 	}
 	}
 
 }
+
 /*
 =================
 CG_RegisterItemVisuals
@@ -2324,7 +2363,6 @@ static void CG_CalculateVRWeaponPosition(int weaponNum, vec3_t origin, vec3_t an
 	switch (cg.predictedPlayerState.weapon)
 	{
 	case WP_KNIFE:
-	case WP_DAGGER:
 		BG_CalculateVRKnifePosition(cg.refdefViewAngles[YAW], cg.refdef.vieworg, CG_VRHeightAdjust(), cg_worldScale.value, origin, angles);
 		break;
 	default:
@@ -2478,9 +2516,8 @@ static void CG_CalculateWeaponPosition( vec3_t origin, vec3_t angles ) {
 			leanscale = 2.0f;
 			break;
 
-			// never adjust
+		// never adjust
 		case WP_KNIFE:
-		case WP_DAGGER:
 		case WP_GRENADE_LAUNCHER:
 		case WP_GRENADE_PINEAPPLE:
 			break;
@@ -2541,14 +2578,16 @@ static void CG_CalculateWeaponPosition( vec3_t origin, vec3_t angles ) {
 #endif
 
 	// idle drift
-    
-	if ((cg.snap->ps.weaponstate == WEAPON_FIRING) && ( cg.predictedPlayerState.weapon == WP_FLAMETHROWER ))
+
+	if (!cg_vanilla_guns.integer &&
+		(cg.snap->ps.weaponstate == WEAPON_FIRING) &&
+		(cg.predictedPlayerState.weapon == WP_FLAMETHROWER))
 	{
-	scale = 15;
-	} 
-	else 
+		scale = 15; // apply reduced idle sway for flamethrower
+	}
+	else
 	{
-	scale = 80;
+		scale = 80; // default sway
 	}
 	fracsin = sin( cg.time * 0.001 );
 	angles[ROLL] += scale * fracsin * 0.01;
@@ -2580,7 +2619,7 @@ static void CG_FlamethrowerFlame( centity_t *cent, vec3_t origin ) {
 	}
 
 	if (cent->currentState.aiChar) {
-		CG_FireFlameChunks( cent, origin, cent->lerpAngles, 1.0, qtrue, 0 );
+	CG_FireFlameChunks( cent, origin, cent->lerpAngles, 1.0, qtrue, 0 );
 	}
 	else {
 		vec3_t origin, angles;
@@ -2729,7 +2768,8 @@ static float CG_VenomSpinAngle( centity_t *cent ) {
 
 	firing = (qboolean)( cent->currentState.eFlags & EF_FIRING );
 
-	if ( cg.snap->ps.weaponstate != WEAPON_FIRING ) { // (SA) this seems better
+	// WEAPON_VENOM_REST: barrels pre-spun via simple zoom, holding at speed without firing
+	if ( cg.snap->ps.weaponstate != WEAPON_FIRING && cg.snap->ps.weaponstate != WEAPON_VENOM_REST ) { // (SA) this seems better
 		firing = qfalse;
 	}
 
@@ -2778,12 +2818,17 @@ qboolean CG_DrawRealWeapons( centity_t *cent ) {
 
 	switch ( cent->currentState.aiChar ) {
 	case AICHAR_LOPER:
+	case AICHAR_LOPER_SPECIAL:
 	case AICHAR_SUPERSOLDIER:       //----(SA)	added
 	case AICHAR_SUPERSOLDIER_LAB:   
 	case AICHAR_PROTOSOLDIER:
 	case AICHAR_ZOMBIE:
+	case AICHAR_ZOMBIE_SURV:
+	case AICHAR_ZOMBIE_FLAME:
+	case AICHAR_ZOMBIE_GHOST:
 	case AICHAR_HELGA:      //----(SA)	added	// boss1 is now helga-blob
 	case AICHAR_WARZOMBIE:
+	case AICHAR_FLESH:
 	case AICHAR_DOG:
 	case AICHAR_PRIEST:
 	case AICHAR_XSHEPHERD:
@@ -2799,72 +2844,95 @@ qboolean CG_DrawRealWeapons( centity_t *cent ) {
 CG_AddWeaponWithPowerups
 ========================
 */
+/*
+========================
+CG_AddWeaponWithPowerups
+========================
+*/
 static void CG_AddWeaponWithPowerups( refEntity_t *gun, int powerups, playerState_t *ps, centity_t *cent ) {
+	qhandle_t savedCustomShader;
+
+	// If ps is NULL, then:
+	// - For the local client, use the predicted player state.
+	// - For other entities (including AI), cast the entity state to a playerState_t.
+	if ( !ps ) {
+		if ( cent->currentState.number == cg.snap->ps.clientNum ) {
+			ps = &cg.predictedPlayerState;
+		} else {
+			ps = (playerState_t *)&cent->currentState;
+		}
+	}
+
+	// IMPORTANT: this function is called for weapon sub-parts (barrels/bolts/hands/etc.)
+	// in RTCW. Those refEntity_t structs are often re-used in a loop, so if we set
+	// customShader and don't restore it, the next part will inherit it and "lose" its base skin.
+	savedCustomShader = gun->customShader;
 
 	// add powerup effects
 	if ( powerups & ( 1 << PW_INVIS ) ) {
+
 		gun->customShader = cgs.media.invisShader;
 		trap_R_AddRefEntityToScene( gun );
+
+		// restore and bail (invis usually replaces base draw)
+		gun->customShader = savedCustomShader;
+
 	} else {
+
+		// always draw base weapon normally (no shader override)
+		gun->customShader = 0;
 		trap_R_AddRefEntityToScene( gun );
 
-		/*if ( powerups & ( 1 << PW_BATTLESUIT ) ) {
-			gun->customShader = cgs.media.battleWeaponShader;
-			trap_R_AddRefEntityToScene( gun );
-		}*/
-		if ( powerups & ( 1 << PW_QUAD ) ) {
-			gun->customShader = cgs.media.quadWeaponShader;
-			trap_R_AddRefEntityToScene( gun );
-		}
-	}
-/*
-	if (ps && ps->clientNum == cg.snap->ps.clientNum) {
-		float	alpha, adjust;
-		weaponInfo_t	*weapon;
-
-		weapon = &cg_weapons[ps->weapon];
-		//if (gun->hModel == weapon->handsModel)
-//		if (cg.snap->ps.onFireStart)
-		{
-
-			// add the flames if on fire
-//			alpha = 2.0 * (float)(FIRE_FLASH_TIME - (cg.time - cg.snap->ps.onFireStart))/FIRE_FLASH_TIME;
-alpha = 1;
-			if (alpha > 0) {
-				if (alpha >= 1.0) {
-					alpha = 1.0;
-				}
-				gun->shaderRGBA[3] = (unsigned char)(255.0*alpha);
-				// calc the fireRiseDir from the velocity
-				VectorNegate( cg.snap->ps.velocity, gun->fireRiseDir );
-				VectorNormalize( gun->fireRiseDir );
-				gun->fireRiseDir[2] += 1;
-				if (VectorNormalize( gun->fireRiseDir ) < 1) {
-					VectorClear( gun->fireRiseDir );
-					gun->fireRiseDir[2] = 1;
-				}
-				// now move towards the newDir
-				adjust = 5.0*(0.001*cg.frametime);
-				VectorMA( cg.v_fireRiseDir, adjust, gun->fireRiseDir, cg.v_fireRiseDir );
-				if (VectorNormalize( cg.v_fireRiseDir ) <= 0.1) {
-					VectorCopy( gun->fireRiseDir, cg.v_fireRiseDir );
-				}
-				VectorCopy( cg.v_fireRiseDir, gun->fireRiseDir );
-
-//				gun->reFlags |= REFLAG_ONLYHAND;
-gun->customShader = cgs.media.dripWetShader2;
-//				gun->customShader = cgs.media.onFireShader;
+		// blink if time left < 5s, toggling every 200ms for battlesuit
+		if ( powerups & ( 1 << PW_BATTLESUIT_SURV ) ) {
+			int timeLeft = ps->powerups[PW_BATTLESUIT_SURV] - cg.time;
+			if ( ( timeLeft < 5000 ) && ( ( cg.time / 200 ) % 2 ) ) {
+				// skip rendering to blink
+			} else {
+				gun->customShader = cgs.media.battleWeaponShader;
 				trap_R_AddRefEntityToScene( gun );
-//				gun->shaderTime = 500;
-//				trap_R_AddRefEntityToScene( gun );
-gun->customShader = cgs.media.dripWetShader;
-//				gun->customShader = cgs.media.onFireShader2;
-				trap_R_AddRefEntityToScene( gun );
-//				gun->reFlags &= ~REFLAG_ONLYHAND;
+				gun->customShader = 0;
 			}
 		}
+
+		// blink for quad powerup
+		if ( powerups & ( 1 << PW_QUAD ) ) {
+			int timeLeft = ps->powerups[PW_QUAD] - cg.time;
+			if ( ( timeLeft < 5000 ) && ( ( cg.time / 200 ) % 2 ) ) {
+				// skip rendering to blink
+			} else {
+				gun->customShader = cgs.media.quadWeaponShader;
+				trap_R_AddRefEntityToScene( gun );
+				gun->customShader = 0;
+			}
+		}
+
+		if ( powerups & ( 1 << PW_XSHIELD ) ) {
+			int timeLeft = ps->powerups[PW_XSHIELD] - cg.time;
+			if ( ( timeLeft < 5000 ) && ( ( cg.time / 200 ) % 2 ) ) {
+				// skip rendering to blink
+			} else {
+				gun->customShader = cgs.media.quadWeaponShader;
+				trap_R_AddRefEntityToScene( gun );
+				gun->customShader = 0;
+			}
+		}
+
+		// blink for vampire powerup
+		if ( powerups & ( 1 << PW_VAMPIRE ) ) {
+			int timeLeft = ps->powerups[PW_VAMPIRE] - cg.time;
+			if ( ( timeLeft < 5000 ) && ( ( cg.time / 200 ) % 2 ) ) {
+				// skip rendering to blink
+			} else {
+				gun->customShader = cgs.media.redQuadShader;
+				trap_R_AddRefEntityToScene( gun );
+				gun->customShader = 0;
+			}
+		}
+
+		// restore original state for caller safety
+		gun->customShader = savedCustomShader;
 	}
-*/
 }
 
 /*
@@ -3372,7 +3440,7 @@ void CG_PlayerTeslaCoilFire( centity_t *cent, vec3_t flashorigin ) {
 
 	if ( ( cg.time / 50 ) % ( 4 + ( cg.time % 4 ) ) == 0 ) {
 		// alt light
-		if ( cgs.gametype == GT_GOTHIC ) {
+		if ( cg_gothic.integer ) {
 		trap_R_AddLightToScene( tr.endpos, 256 + 600 * tr.fraction, 0.2, 0, 0, 1 );
 		} else {
 		trap_R_AddLightToScene( tr.endpos, 256 + 600 * tr.fraction, 0.2, 0.6, 1, 1 );
@@ -3382,7 +3450,7 @@ void CG_PlayerTeslaCoilFire( centity_t *cent, vec3_t flashorigin ) {
 		//trap_R_AddLightToScene( tr.endpos, 128 + 500*tr.fraction, 1, 1, 1, 10 );
 	} else {
 		// blue light
-		if ( cgs.gametype == GT_GOTHIC ) {
+		if ( cg_gothic.integer ) {
 		trap_R_AddLightToScene( tr.endpos, 256 + 600 * tr.fraction, 0.2, 0, 0, 1 );
 		} else {
 		trap_R_AddLightToScene( tr.endpos, 256 + 600 * tr.fraction, 0.2, 0.6, 1, 0 );
@@ -3408,6 +3476,18 @@ CG_MonsterUsingWeapon
 */
 qboolean CG_MonsterUsingWeapon( centity_t *cent, int aiChar, int weaponNum ) {
 	return ( cent->currentState.aiChar == aiChar ) && ( cent->currentState.weapon == weaponNum );
+}
+
+/*
+==============
+CG_WeaponIsUpgraded
+==============
+*/
+qboolean CG_WeaponIsUpgraded(weapon_t weaponNum) {
+	if (cg.snap->ps.clientNum != cg.clientNum) {
+		return qfalse;
+	}
+	return (cg.snap->ps.weaponUpgraded[weaponNum] != 0);
 }
 
 /*
@@ -3488,11 +3568,11 @@ void CG_AddPlayerWeapon( refEntity_t *parent, playerState_t *ps, centity_t *cent
 
 
 	if ( isPlayer ) {
-		akimboFire_colt = BG_AkimboFireSequence( weaponNum, cg.predictedPlayerState.ammoclip[WP_AKIMBO], cg.predictedPlayerState.ammoclip[WP_COLT], vr->akimboTriggerState );
-        akimboFire_tt33 = BG_AkimboFireSequence( weaponNum, cg.predictedPlayerState.ammoclip[WP_DUAL_TT33], cg.predictedPlayerState.ammoclip[WP_TT33], vr->akimboTriggerState);
+		akimboFire_colt = BG_AkimboFireSequence( weaponNum, cg.predictedPlayerState.ammoclip[WP_AKIMBO], vr->akimboTriggerState );
+        akimboFire_tt33 = BG_AkimboFireSequence( weaponNum, cg.predictedPlayerState.ammoclip[WP_DUAL_TT33], vr->akimboTriggerState );
 	} else if ( ps ) {
-		akimboFire_colt = BG_AkimboFireSequence( weaponNum, ps->ammoclip[WP_AKIMBO], ps->ammoclip[WP_AKIMBO], 0 );
-        akimboFire_tt33 = BG_AkimboFireSequence( weaponNum, ps->ammoclip[WP_DUAL_TT33], ps->ammoclip[WP_DUAL_TT33], 0 );
+		akimboFire_colt = BG_AkimboFireSequence( weaponNum, ps->ammoclip[WP_AKIMBO], 0 );
+        akimboFire_tt33 = BG_AkimboFireSequence( weaponNum, ps->ammoclip[WP_DUAL_TT33], 0 );
 	}
 
 	// add the weapon
@@ -3509,9 +3589,12 @@ void CG_AddPlayerWeapon( refEntity_t *parent, playerState_t *ps, centity_t *cent
 		gun.shaderRGBA[3] = 255;
 	}
 
-	if ( ps ) {
+	if (ps)
+	{
 		gun.hModel = weapon->weaponModel[W_FP_MODEL].model;
-	} else {
+	}
+	else
+	{
 		gun.hModel = weapon->weaponModel[W_TP_MODEL].model;
 	}
 
@@ -3593,14 +3676,30 @@ void CG_AddPlayerWeapon( refEntity_t *parent, playerState_t *ps, centity_t *cent
 		drawpart = qtrue;
 	}
 
-	if ( drawpart && drawrealweap ) {
-		if (isPlayer && weapon->handsSkin) { // Eugeny
-        gun.customSkin = weapon->handsSkin;
-        }
-		CG_AddWeaponWithPowerups( &gun, cent->currentState.powerups, ps, cent );
+	if (drawpart && drawrealweap)
+	{
+		if (isPlayer)
+		{
+			if (CG_WeaponIsUpgraded(weaponNum))
+			{
+				if (weapon->upgradedMapSkin)
+				{
+					gun.customSkin = weapon->upgradedMapSkin;
+				}
+				else if (weapon->upgradedSkin)
+				{
+					gun.customSkin = weapon->upgradedSkin;
+				}
+			}
+			else if (weapon->handsSkin)
+			{
+				gun.customSkin = weapon->handsSkin;
+			}
+		}
+		CG_AddWeaponWithPowerups(&gun, cent->currentState.powerups, ps, cent);
 	}
 
-	if ( isPlayer ) {
+	if ( isPlayer && ps != NULL ) {
 		refEntity_t brass;
 
 		// opposite tag in akimbo, since at this point the weapon
@@ -3632,8 +3731,23 @@ void CG_AddPlayerWeapon( refEntity_t *parent, playerState_t *ps, centity_t *cent
 			spunpart = qfalse;
 			barrel.hModel = weapon->partModels[W_FP_MODEL][i].model;
 
-			if ( isPlayer && weapon->handsSkin ) { // eugeny
-				barrel.customSkin = weapon->handsSkin;
+			if (isPlayer)
+			{
+				if (CG_WeaponIsUpgraded(weaponNum))
+				{
+					if (weapon->upgradedMapSkin)
+					{
+						barrel.customSkin = weapon->upgradedMapSkin;
+					}
+					else if (weapon->upgradedSkin)
+					{
+						barrel.customSkin = weapon->upgradedSkin;
+					}
+				}
+				else if (weapon->handsSkin)
+				{
+					barrel.customSkin = weapon->handsSkin;
+				}
 			}
 
 			// check for spinning
@@ -3670,6 +3784,10 @@ void CG_AddPlayerWeapon( refEntity_t *parent, playerState_t *ps, centity_t *cent
 			}
 			// end spinning
 
+			// knife's off-hand model is cosmetic only; hide it while holding a melee prop (chair)
+			if ( weaponNum == WP_KNIFE && i == W_PART_2 && ( ps->eFlags & EF_MELEE_ACTIVE ) ) {
+				barrel.hModel = 0;
+			}
 
 			if ( barrel.hModel ) {
 				if ( i == W_PART_1 ) {
@@ -3752,7 +3870,7 @@ void CG_AddPlayerWeapon( refEntity_t *parent, playerState_t *ps, centity_t *cent
 					}
 			}
 		}
-	}
+		}
 
 	// make sure we aren't looking at cg.predictedPlayerEntity for LG
 	nonPredictedCent = &cg_entities[cent->currentState.number];
@@ -3798,9 +3916,9 @@ void CG_AddPlayerWeapon( refEntity_t *parent, playerState_t *ps, centity_t *cent
 		}
 		else
 		{
-			CG_PositionRotatedEntityOnTag(&flash, parent, "tag_flash");
+				CG_PositionRotatedEntityOnTag(&flash, parent, "tag_flash");
+			}
 		}
-	}
 	else
 	{
 		CG_PositionRotatedEntityOnTag(&flash, &gun, "tag_flash");
@@ -3863,10 +3981,11 @@ void CG_AddPlayerWeapon( refEntity_t *parent, playerState_t *ps, centity_t *cent
 	// weapons that don't need to go any further as they have no flash or light
 	if ( weaponNum == WP_GRENADE_LAUNCHER ||
 		 weaponNum == WP_GRENADE_PINEAPPLE ||
+		 weaponNum == WP_SMOKE_BOMB ||
 		 weaponNum == WP_KNIFE ||
 		 weaponNum == WP_DYNAMITE ||
-		 weaponNum == WP_M7 ||
-		 weaponNum == WP_DAGGER ) {
+		 weaponNum == WP_DYNAMITE_ENG ||
+		 weaponNum == WP_M7 ) {
 		return;
 	}
 
@@ -4108,12 +4227,12 @@ void CG_AddViewWeapon( playerState_t *ps ) {
 	}
 
 
-	memset(&hand, 0, sizeof(hand));
+	memset( &hand, 0, sizeof( hand ) );
 	memset(&handAkimbo, 0, sizeof(handAkimbo));
 
-	if (ps->weapon > WP_NONE) {
+	if ( ps->weapon > WP_NONE ) {
 
-		//CG_RegisterWeapon( ps->weapon, qfalse );
+			//CG_RegisterWeapon( ps->weapon, qfalse );
 
 		if (ps->weapon == WP_AKIMBO) {
 			weapon = &cg_weapons[WP_COLT];
@@ -4124,48 +4243,48 @@ void CG_AddViewWeapon( playerState_t *ps ) {
 			weaponAkimbo = &cg_weapons[WP_DUAL_TT33];
 		}
 		else {
-			weapon = &cg_weapons[ps->weapon];
+			weapon = &cg_weapons[ ps->weapon ];
 		}
 
 		// set up gun position
 		float scale = CG_CalculateWeaponPositionAndScale(qtrue, ps, hand.origin, angles, qfalse);
 		float scaleAkimbo = CG_CalculateWeaponPositionAndScale(qtrue, ps, handAkimbo.origin, anglesAkimbo, qtrue);
-
+            
 		/*			// RealRTCW gun position is defined in .weap files if CVAR is active.
-					if ( cg_gunPosLock.integer == 1 )
-					{
-					gunoff[0] = weapon->weaponPosition[0];
-					gunoff[1] = weapon->weaponPosition[1];
-					gunoff[2] = weapon->weaponPosition[2];
-					}
-					else if ( cg_gunPosLock.integer == 2 )
-					{
-					gunoff[0] = weapon->weaponPositionAlt[0];
-					gunoff[1] = weapon->weaponPositionAlt[1];
-					gunoff[2] = weapon->weaponPositionAlt[2];
-					}
-					else if ( cg_gunPosLock.integer == 3 )
-					{
-					gunoff[0] = weapon->weaponPositionAlt2[0];
-					gunoff[1] = weapon->weaponPositionAlt2[1];
-					gunoff[2] = weapon->weaponPositionAlt2[2];
-					}
-					else
-					{
-					gunoff[0] = cg_gun_x.value;
-					gunoff[1] = cg_gun_y.value;
-					gunoff[2] = cg_gun_z.value;
-					}
+            if ( cg_gunPosLock.integer == 1 ) 
+			{
+		    gunoff[0] = weapon->weaponPosition[0];
+			gunoff[1] = weapon->weaponPosition[1];
+			gunoff[2] = weapon->weaponPosition[2];
+			} 
+			else if ( cg_gunPosLock.integer == 2 ) 
+			{
+			gunoff[0] = weapon->weaponPositionAlt[0];
+			gunoff[1] = weapon->weaponPositionAlt[1];
+			gunoff[2] = weapon->weaponPositionAlt[2];
+			} 
+			else if ( cg_gunPosLock.integer == 3 )
+			{
+			gunoff[0] = weapon->weaponPositionAlt2[0];
+			gunoff[1] = weapon->weaponPositionAlt2[1];
+			gunoff[2] = weapon->weaponPositionAlt2[2];
+			} 
+			else
+			{
+			gunoff[0] = cg_gun_x.value;
+			gunoff[1] = cg_gun_y.value;
+			gunoff[2] = cg_gun_z.value;
+			}
 
-				VectorMA( hand.origin, ( gunoff[0] + fovOffset[0] ), cg.refdef.viewaxis[0], hand.origin );
-				VectorMA( hand.origin, ( gunoff[1] + fovOffset[1] ), cg.refdef.viewaxis[1], hand.origin );
-				VectorMA( hand.origin, ( gunoff[2] + fovOffset[2] ), cg.refdef.viewaxis[2], hand.origin );
+		VectorMA( hand.origin, ( gunoff[0] + fovOffset[0] ), cg.refdef.viewaxis[0], hand.origin );
+		VectorMA( hand.origin, ( gunoff[1] + fovOffset[1] ), cg.refdef.viewaxis[1], hand.origin );
+		VectorMA( hand.origin, ( gunoff[2] + fovOffset[2] ), cg.refdef.viewaxis[2], hand.origin );
 		*/
 
-		AnglesToAxis(angles, hand.axis);
+		AnglesToAxis( angles, hand.axis );
 		AnglesToAxis(anglesAkimbo, handAkimbo.axis);
 
-		if (cg_gun_frame.integer) {
+		if ( cg_gun_frame.integer ) {
 			hand.frame = hand.oldframe = cg_gun_frame.integer;
 			hand.backlerp = 0;
 			handAkimbo.frame = handAkimbo.oldframe = cg_gun_frame.integer;
@@ -4207,11 +4326,11 @@ void CG_AddViewWeapon( playerState_t *ps ) {
 				}
 			}
 			else {
-				CG_WeaponAnimation(ps, weapon, &hand.oldframe, &hand.frame, &hand.backlerp);   //----(SA)	changed                
-			}
+			CG_WeaponAnimation( ps, weapon, &hand.oldframe, &hand.frame, &hand.backlerp );   //----(SA)	changed
+		}
 		}
 
-		VectorCopy(hand.origin, hand.lightingOrigin);
+		VectorCopy( hand.origin, hand.lightingOrigin );
 		VectorCopy(handAkimbo.origin, handAkimbo.lightingOrigin);
 
 		hand.hModel = weapon->handsModel;
@@ -4245,7 +4364,7 @@ void CG_AddViewWeapon( playerState_t *ps ) {
 		// Ridah
 
 	}   // end  "if ( ps->weapon > WP_NONE)"
-	
+
 
 	// Rafael
 	// add the foot
@@ -4480,12 +4599,12 @@ void CG_DrawWeaponSelect( void ) {
 		case WP_G43:
 		case WP_M1GARAND:
 		case WP_BAR:
+		case WP_M30:
 		case WP_MP44:
 		case WP_MG42M:
 		case WP_M97:
 		case WP_AUTO5:
 		case WP_BROWNING:
-		case WP_M30:
 		case WP_STEN:
 		case WP_MAUSER:
 		case WP_DELISLE:
@@ -4669,7 +4788,8 @@ static qboolean CG_WeaponSelectable( int i ) {
 		return qfalse;
 	}
 
-	if ( !CG_WeaponHasAmmo( i ) ) {
+	if (!CG_WeaponHasAmmo(i) && (cg_newinventory.integer <= 0 && cg_gameType.integer != GT_SURVIVAL))
+	{
 		return qfalse;
 	}
 
@@ -5058,7 +5178,7 @@ void CG_ItemSelectorSelect_f(void)
 			cg.holdableSelectTime = cg.time;
 			cg.holdableSelect = cg.itemSelectorSelection;
 
-			trap_SetUserCmdValue(cg.weaponSelect, cg.holdableSelect, cg.zoomSensitivity, cg.cld);
+			trap_SetUserCmdValue(cg.weaponSelect, cg.holdableSelect, cg.zoomSensitivity, cg.cld, cg.isZoomed, cg.aaStrength, cg.aaDYaw, cg.aaDPitch);
 			//Immediately use the selected inventory item
 			centity_t* cent = &cg_entities[cg.snap->ps.clientNum];
 			vr->use_item = qtrue; //HACK! Use this to fake a button push
@@ -5812,10 +5932,6 @@ void CG_PlaySwitchSound( int lastweap, int newweap ) {
 
 	if ( getAltWeapon( lastweap ) == newweap ) { // alt switch
 		switch ( newweap ) {
-		case WP_SILENCER:
-		case WP_LUGER:
-			switchsound = cg_weapons[newweap].switchSound[0];
-			break;
 		case WP_M7:
 			switchsound = cg_weapons[newweap].switchSound[0];
 			break;
@@ -5889,6 +6005,55 @@ void CG_FinishWeaponChange( int lastweap, int newweap ) {
 	cg.weaponSelect     = newweap;
 }
 
+qboolean CG_WeaponSupportsSimpleZoom( int weap ) {
+    switch ( weap ) {
+        // Disallow: already-scoped / special zoom weapons
+        case WP_SNIPERRIFLE:
+        case WP_SNOOPERSCOPE:
+        case WP_FG42SCOPE:
+        case WP_DELISLESCOPE:
+        case WP_M1941SCOPE:
+            return qfalse;
+
+        // Disallow: binocs / mounted / explosives / melee etc (adjust to your mod)
+        case WP_GRENADE_LAUNCHER:
+        case WP_GRENADE_PINEAPPLE:
+        case WP_SMOKE_BOMB:
+		case WP_AIRSTRIKE:
+        case WP_DYNAMITE:
+        case WP_DYNAMITE_ENG:
+        case WP_POISONGAS:
+        case WP_KNIFE:
+            return qfalse;
+
+        default:
+            break;
+    }
+
+    // Also don’t allow while on MG42
+    if ( cg.snap->ps.eFlags & EF_MG42_ACTIVE ) {
+        return qfalse;
+    }
+
+    return qtrue;
+}
+
+void CG_ToggleSimpleZoom( void ) {
+    cg.simpleZoomed = !cg.simpleZoomed;
+    cg.simpleZoomTime = cg.time;
+    // let the server know so spectators/followers see the same zoom
+    trap_SendClientCommand( va( "simplezoom %i", cg.simpleZoomed ) );
+}
+
+
+void CG_ResetSimpleZoom( void ) {
+    if ( cg.simpleZoomed ) {
+        cg.simpleZoomed = qfalse;
+        cg.simpleZoomTime = cg.time;
+        trap_SendClientCommand( "simplezoom 0" );
+    }
+}
+
 /*
 ==============
 CG_AltfireWeapon_f
@@ -5898,6 +6063,13 @@ CG_AltfireWeapon_f
 void CG_AltWeapon_f( void ) {
 	int original, num;
 	float spd = VectorLength( cg.snap->ps.velocity );
+
+	if (cg.snap && cg.snap->ps.weapon == WP_KNIFE)
+	{
+		// Dirty hack
+		trap_SendConsoleCommand(" +attack2; -attack2\n");
+		return;
+	}
 
 	if ( !cg.snap ) {
 		return;
@@ -5914,51 +6086,29 @@ void CG_AltWeapon_f( void ) {
 		return; // force pause so holding it down won't go too fast
 
 	}
-	// Don't try to switch when in the middle of reloading.
-	if ( cg.snap->ps.weaponstate == WEAPON_RELOADING ) {
-		return;
-	}
 
 	original = cg.weaponSelect;
 
 	num = getAltWeapon( original );
 
-	if ( CG_WeaponSelectable( num ) ) {   // new weapon is valid
+	if (num == WP_NONE || num == original || !CG_WeaponSelectable(num))
+	{
+		if (CG_WeaponSupportsSimpleZoom(original))
+		{
 
-//----(SA)	testing mod functionality for the silencer on the luger
-		// (SA) this way, if you switch away from the silenced luger,
-		//		the silencer will still be attached when you switch back
-		//		(until you remove it)
-		// TODO: will need to make sure the table gets initialized properly on restart/death/whatever.
-		//		 I still think I'm going to make the weapon banks stored in the config, so this will
-		//		just be a matter of resetting the banks to what's in the config.
+			if (cg.snap->ps.weaponstate == WEAPON_RELOADING || cg.snap->ps.weaponstate == WEAPON_DROPPING  || cg.snap->ps.weaponstate == WEAPON_RAISING 
+			|| cg.snap->ps.weaponstate == WEAPON_SPRINT_IN  || cg.snap->ps.weaponstate == WEAPON_SPRINT_OUT )
+			{
+				return;
+			}
+			CG_ToggleSimpleZoom();
+		}
+		return;
+	}
+
+	if ( CG_WeaponSelectable( num ) ) {   // new weapon is valid
 		
 		switch ( original ) {
-		case WP_LUGER:
-			if ( cg.snap->ps.eFlags & EF_MELEE_ACTIVE ) {   // if you're holding a chair, you can't screw on the silencer
-				return;
-			}
-			weapBanks[2][0] = WP_SILENCER;
-			break;
-		case WP_SILENCER:
-			if ( cg.snap->ps.eFlags & EF_MELEE_ACTIVE ) {   // if you're holding a chair, you can't remove the silencer
-				return;
-			}
-			weapBanks[2][0] = WP_LUGER;
-			break;
-
-		case WP_AKIMBO:
-			weapBanks[2][1] = WP_COLT;
-			break;
-		case WP_COLT:
-			weapBanks[2][1] = WP_AKIMBO;
-			break;
-		case WP_DUAL_TT33:
-			weapBanks[2][2] = WP_TT33;
-			break;
-		case WP_TT33:
-			weapBanks[2][2] = WP_DUAL_TT33;
-			break;
 		case WP_MAUSER:
 		case WP_GARAND:
 		case WP_FG42:
@@ -5971,6 +6121,7 @@ void CG_AltWeapon_f( void ) {
 			break;
 		}
 
+		trap_S_StartSoundEx( NULL, cg.snap->ps.clientNum, CHAN_WEAPON, cgs.media.nullSound, SND_CUTOFF );
 		CG_FinishWeaponChange( original, num );
 	}
 
@@ -5978,8 +6129,7 @@ void CG_AltWeapon_f( void ) {
 
 		// Arnout: don't allow another weapon switch when we're still swapping the gpg40, to prevent animation breaking
 	if ( ( cg.snap->ps.weaponstate == WEAPON_RAISING || cg.snap->ps.weaponstate == WEAPON_DROPPING ) &&
-		 ( ( original == WP_M7 || num == WP_M7 ) ||
-		   ( original == WP_SILENCER || num == WP_SILENCER  ) ) ) {
+		 ( ( original == WP_M7 || num == WP_M7 ) ) ) {
 		return;
 	}
 }
@@ -6001,9 +6151,6 @@ void CG_NextWeap( qboolean switchBanks ) {
 	CG_WeaponIndex( curweap, &bank, &cycle );     // get bank/cycle of current weapon
 
 	switch ( num ) {
-	case WP_SILENCER:
-		curweap = num = WP_LUGER;
-		break;
 	case WP_M7:
 		curweap = num = WP_M1GARAND;
 		break;
@@ -6015,12 +6162,6 @@ void CG_NextWeap( qboolean switchBanks ) {
 		break;
 	case WP_SNOOPERSCOPE:
 		curweap = num = WP_GARAND;
-		break;
-	case WP_AKIMBO:
-		curweap = num = WP_COLT;
-		break;
-	case WP_DUAL_TT33:
-		curweap = num = WP_TT33;
 		break;
 	}
 
@@ -6147,9 +6288,6 @@ void CG_PrevWeap( qboolean switchBanks ) {
 	num = curweap = cg.weaponSelect;
 
 	switch ( num ) {
-	case WP_SILENCER:
-		curweap = num = WP_LUGER;
-		break;
 	case WP_M7:
 		curweap = num = WP_M1GARAND;
 		break;
@@ -6162,24 +6300,13 @@ void CG_PrevWeap( qboolean switchBanks ) {
 	case WP_SNOOPERSCOPE:
 		curweap = num = WP_GARAND;
 		break;
-	case WP_AKIMBO:
-		curweap = num = WP_COLT;
-		break;
-	case WP_DUAL_TT33:
-		curweap = num = WP_TT33;
-		break;
 	}
 
 	CG_WeaponIndex( curweap, &bank, &cycle );     // get bank/cycle of current weapon
 
-	// initially, just try to find a lower weapon in the current bank
-//	if ( cg_cycleAllWeaps.integer || !switchBanks ) {
 	if ( 1 ) {
-//		if(cycle == 0) {		// already at bottom of list
-//			prevbank = qtrue;
-//		} else {
+
 		for ( i = cycle; i >= 0; i-- ) {
-//				num = getPrevWeapInBank(bank, i);
 			num = getPrevWeapInBankBynum( num );
 			CG_WeaponIndex( num, NULL, &newcycle );         // get cycle of new weapon.  if it's greater than the original, then it cycled around
 			if ( switchBanks ) {
@@ -6213,10 +6340,6 @@ void CG_PrevWeap( qboolean switchBanks ) {
 	} else {
 		prevbank = qtrue;
 	}
-	// cycle to previous bank.
-	//	if cycleAllWeaps: find highest weapon in bank
-	//		else: try to find weap in bank that matches cycle position
-	//			else: use base weap in bank
 
 	if ( prevbank ) {
 		for ( i = 0; i < MAX_WEAP_BANKS; i++ ) {
@@ -6288,11 +6411,11 @@ void CG_LastWeaponUsed_f( void ) {
 	if ( cg.time - cg.weaponSelectTime < cg_weaponCycleDelay.integer ) {
 		return; // force pause so holding it down won't go too fast
 	}
+
+	trap_S_StartSoundEx(NULL, cg.snap->ps.clientNum, CHAN_WEAPON, cgs.media.nullSound, SND_CUTOFF);
+
 	cg.weaponSelectTime = cg.time;  // flash the current weapon icon
-	// don't switchback if reloading (it nullifies the reload)
-	if ( cg.snap->ps.weaponstate == WEAPON_RELOADING ) {
-		return;
-	}
+
 	if ( !cg.switchbackWeapon ) {
 		cg.switchbackWeapon = cg.weaponSelect;
 		return;
@@ -6315,6 +6438,10 @@ void CG_NextWeaponInBank_f( void ) {
 		return; // force pause so holding it down won't go too fast
 
 	}
+
+	trap_S_StartSoundEx(NULL, cg.snap->ps.clientNum, CHAN_WEAPON, cgs.media.nullSound, SND_CUTOFF);
+
+
 	// this cvar is an option that lets the player use his weapon switching keys (probably the mousewheel)
 	// for zooming (binocs/snooper/sniper/etc.)
 	if ( cg.zoomval ) {
@@ -6343,6 +6470,9 @@ void CG_PrevWeaponInBank_f( void ) {
 		return; // force pause so holding it down won't go too fast
 
 	}
+
+	trap_S_StartSoundEx(NULL, cg.snap->ps.clientNum, CHAN_WEAPON, cgs.media.nullSound, SND_CUTOFF);
+
 	// this cvar is an option that lets the player use his weapon switching keys (probably the mousewheel)
 	// for zooming (binocs/snooper/sniper/etc.)
 	if ( cg.zoomval ) {
@@ -6375,6 +6505,8 @@ void CG_NextWeapon_f( void ) {
 		return;
 	}
 
+	trap_S_StartSoundEx(NULL, cg.snap->ps.clientNum, CHAN_WEAPON, cgs.media.nullSound, SND_CUTOFF);
+
 	// this cvar is an option that lets the player use his weapon switching keys (probably the mousewheel)
 	// for zooming (binocs/snooper/sniper/etc.)
 	if ( cg.zoomval ) {
@@ -6392,18 +6524,6 @@ void CG_NextWeapon_f( void ) {
 
 	}
 	cg.weaponSelectTime = cg.time;  // flash the current weapon icon
-
-	// Don't try to switch when in the middle of reloading.
-	// cheatinfo:	The server actually would let you switch if this check were not
-	//				present, but would discard the reload.  So the when you switched
-	//				back you'd have to start the reload over.  This seems bad, however
-	//				the delay for the current reload is already in effect, so you'd lose
-	//				the reload time twice.  (the first pause for the current weapon reload,
-	//				and the pause when you have to reload again 'cause you canceled this one)
-
-	if ( cg.snap->ps.weaponstate == WEAPON_RELOADING ) {
-		return;
-	}
 
 	CG_NextWeap( qtrue );
 }
@@ -6422,6 +6542,8 @@ void CG_PrevWeapon_f( void ) {
 		return;
 	}
 
+	trap_S_StartSoundEx(NULL, cg.snap->ps.clientNum, CHAN_WEAPON, cgs.media.nullSound, SND_CUTOFF);
+
 	// this cvar is an option that lets the player use his weapon switching keys (probably the mousewheel)
 	// for zooming (binocs/snooper/sniper/etc.)
 	if ( cg.zoomval ) {
@@ -6440,12 +6562,8 @@ void CG_PrevWeapon_f( void ) {
 	}
 	cg.weaponSelectTime = cg.time;  // flash the current weapon icon
 
-	// Don't try to switch when in the middle of reloading.
-	if ( cg.snap->ps.weaponstate == WEAPON_RELOADING ) {
-		return;
-	}
-
 	CG_PrevWeap( qtrue );
+
 }
 
 
@@ -6459,6 +6577,8 @@ CG_WeaponBank_f
 void CG_WeaponBank_f( void ) {
 	int num, i, curweap;
 	int curbank = 0, curcycle = 0, bank = 0, cycle = 0;
+	
+	trap_S_StartSoundEx(NULL, cg.snap->ps.clientNum, CHAN_WEAPON, cgs.media.nullSound, SND_CUTOFF);
 
 	if ( !cg.snap ) {
 		return;
@@ -6473,11 +6593,6 @@ void CG_WeaponBank_f( void ) {
 
 	}
 	cg.weaponSelectTime = cg.time;  // flash the current weapon icon
-
-	// Don't try to switch when in the middle of reloading.
-	if ( cg.snap->ps.weaponstate == WEAPON_RELOADING ) {
-		return;
-	}
 
 	bank = atoi( CG_Argv( 1 ) );
 
@@ -6526,6 +6641,8 @@ void CG_Weapon_f( void ) {
 	int bank = 0, cycle = 0, newbank = 0, newcycle = 0;
 	qboolean banked = qfalse;
 
+	trap_S_StartSoundEx(NULL, cg.snap->ps.clientNum, CHAN_WEAPON, cgs.media.nullSound, SND_CUTOFF);
+
 	if ( !cg.snap ) {
 		return;
 	}
@@ -6537,11 +6654,6 @@ void CG_Weapon_f( void ) {
 	num = atoi( CG_Argv( 1 ) );
 
 	cg.weaponSelectTime = cg.time;  // flash the current weapon icon
-
-	// Don't try to switch when in the middle of reloading.
-	if ( cg.snap->ps.weaponstate == WEAPON_RELOADING ) {
-		return;
-	}
 
 
 	if ( num <= WP_NONE || num > WP_NUM_WEAPONS ) {
@@ -6604,7 +6716,7 @@ void CG_OutOfAmmoChange( void ) {
 
 	// if you're using an alt mode weapon, try switching back to the parent
 	// otherwise, switch to the equivalent if you've got it
-	if ( cg.weaponSelect >= WP_SILENCER && cg.weaponSelect <= WP_DELISLESCOPE ) {
+	if ( cg.weaponSelect >= WP_SNIPERRIFLE && cg.weaponSelect <= WP_M7 ) {
 		cg.weaponSelect = equiv = getAltWeapon( cg.weaponSelect );    // base any further changes on the parent
 		if ( CG_WeaponSelectable( equiv ) ) {    // the parent was selectable, drop back to that
 			CG_FinishWeaponChange( cg.predictedPlayerState.weapon, cg.weaponSelect ); //----(SA)
@@ -6645,6 +6757,146 @@ void CG_OutOfAmmoChange( void ) {
 	// available weap using the regular selection scheme
 	CG_NextWeap( qtrue );
 
+}
+
+
+
+void CG_UpdateWeaponWheelSelection( float cursorx, float cursory ) {
+
+	int visibleWeapons[MAX_WEAPONS];
+	int numVisible = CG_CollectWeaponWheelWeapons( visibleWeapons, MAX_WEAPONS );
+
+	if ( numVisible <= 0 ) {
+		cg.weaponWheel.hoveredWeapon = 0;
+		return;
+	}
+
+	if ( numVisible == 1 ) {
+		cg.weaponWheel.hoveredWeapon = visibleWeapons[0];
+		cg.weaponWheel.latchedWeapon = visibleWeapons[0];
+		cg.weaponWheel.lastWeapon = visibleWeapons[0];
+		return;
+	}
+
+	float cx = SCREEN_WIDTH * 0.35f;
+	float cy = SCREEN_HEIGHT * 0.5f;
+
+	float dx, dy;
+	float len;
+
+	qboolean usingStick = qfalse;
+
+	if ( fabsf( cg.weaponWheel.stickX ) > 0.2f || fabsf( cg.weaponWheel.stickY ) > 0.2f ) {
+		usingStick = qtrue;
+	}
+
+	if ( usingStick ) {
+		dx = cg.weaponWheel.stickX;
+		dy = cg.weaponWheel.stickY;
+
+		len = sqrtf( dx * dx + dy * dy );
+
+		if ( len < 0.2f )
+		{
+
+			// Do NOT clear selection if we already latched one
+			if ( cg.weaponWheel.latchedWeapon > 0 )
+			{
+				cg.weaponWheel.hoveredWeapon = cg.weaponWheel.latchedWeapon;
+			}
+			else
+			{
+				cg.weaponWheel.hoveredWeapon = 0;
+			}
+
+			return;
+		}
+
+		dx /= len;
+		dy /= len;
+	} else {
+		dx = cursorx - cx;
+		dy = cursory - cy;
+
+		len = sqrtf( dx * dx + dy * dy );
+
+		if ( len < 30.0f ) {
+			cg.weaponWheel.hoveredWeapon = 0;
+			return;
+		}
+
+		dx /= len;
+		dy /= len;
+	}
+
+	int idx = 0;
+
+	if ( numVisible < 5 ) {
+
+		if ( numVisible == 2 ) {
+			idx = ( dx >= 0.0f ) ? 1 : 0;
+		} else if ( numVisible == 3 ) {
+			if ( dy < -0.45f ) {
+				idx = 0;
+			} else if ( dx >= 0.0f ) {
+				idx = 1;
+			} else {
+				idx = 2;
+			}
+		} else if ( numVisible == 4 ) {
+			if ( fabsf( dx ) > fabsf( dy ) ) {
+				idx = ( dx >= 0.0f ) ? 1 : 3;
+			} else {
+				idx = ( dy >= 0.0f ) ? 2 : 0;
+			}
+		}
+
+	} else {
+
+		float angle = atan2f( dy, dx );
+		angle += M_PI * 0.5f;
+
+		if ( angle < 0 ) {
+			angle += 2.0f * M_PI;
+		}
+		if ( angle >= 2.0f * M_PI ) {
+			angle -= 2.0f * M_PI;
+		}
+
+		float sectorSize = ( 2.0f * M_PI ) / (float)numVisible;
+		float angleOffset = sectorSize * 0.5f;
+
+		idx = (int)( ( angle + angleOffset ) / sectorSize );
+
+		if ( idx >= numVisible ) {
+			idx = 0;
+		}
+	}
+
+	int newWeapon = visibleWeapons[idx];
+
+	if ( usingStick )
+	{
+
+		// if switching too fast between neighbors, resist it
+		if ( cg.weaponWheel.lastWeapon != 0 &&
+			newWeapon != cg.weaponWheel.lastWeapon )
+		{
+
+			float threshold = 0.15f; // tune
+
+			if ( len < ( 0.4f + threshold ) )
+			{
+				newWeapon = cg.weaponWheel.lastWeapon;
+			}
+		}
+
+		cg.weaponWheel.latchedWeapon = newWeapon;
+		cg.weaponWheel.lastWeapon = newWeapon;
+	}
+
+	// Hover is always current frame
+	cg.weaponWheel.hoveredWeapon = newWeapon;
 }
 
 /*
@@ -6780,7 +7032,6 @@ void CG_WeaponFireRecoil( int weapon ) {
 	case WP_TT33:
 	case WP_AKIMBO:
 	case WP_DUAL_TT33:
-	case WP_P38: 
 	   yawRandom = 0.5;
 	   pitchRecoilAdd = 2;
 	   pitchAdd = 1;
@@ -6939,7 +7190,9 @@ void CG_FireWeapon( centity_t *cent, int event ) {
 				  ent->weapon == WP_GRENADE_PINEAPPLE ||
 				  ent->weapon == WP_DYNAMITE ||
 				  ent->weapon == WP_AIRSTRIKE ||
-				  ent->weapon == WP_POISONGAS ) { 
+				  ent->weapon == WP_POISONGAS ||
+				  ent->weapon == WP_SMOKE_BOMB ||
+				  ent->weapon == WP_DYNAMITE_ENG ) { 
 		if ( ent->apos.trBase[0] > 0 ) { // underhand
 			return;
 		}
@@ -6955,7 +7208,7 @@ void CG_FireWeapon( centity_t *cent, int event ) {
 	if ( cent->currentState.powerups & ( 1 << PW_QUAD ) ) {
 		trap_S_StartSound( NULL, cent->currentState.number, CHAN_ITEM, cgs.media.quadSound );
 	}
-
+	
 	if ( ( cent->currentState.event & ~EV_EVENT_BITS ) == EV_FIRE_WEAPON_LASTSHOT ) {
 		firesound = &weap->lastShotSound[0];
 		fireEchosound = &weap->flashEchoSound[0];
@@ -6972,7 +7225,7 @@ void CG_FireWeapon( centity_t *cent, int event ) {
 			if (cent->currentState.aiChar) {
 			   firesound = &weap->flashSoundAi[0];
 			} else {
-			firesound = &weap->flashSound[0];
+			   firesound = &weap->flashSound[0];
 			}
 			fireEchosound = &weap->flashEchoSound[0];
 		}
@@ -6980,7 +7233,7 @@ void CG_FireWeapon( centity_t *cent, int event ) {
 			if (cent->currentState.aiChar) {
 			   firesound = &weap->flashSoundAi[0];
 			} else {
-		firesound = &weap->flashSound[0];
+			   firesound = &weap->flashSound[0];
 			}
 		fireEchosound = &weap->flashEchoSound[0];
 	}
@@ -7010,15 +7263,24 @@ void CG_FireWeapon( centity_t *cent, int event ) {
 				if ( gdist > SOUND_FAR_ECHO_DISTANCE && gdist < SOUND_MAX_WEAPON_DISTANCE ) {   // temp dist.  TODO: use numbers that are weapon specific // RealRTCW was 4096
 					// use gorg as the new sound origin
 					VectorMA( cg.refdef.vieworg, 64, norm, gorg );    // sound-on-a-stick
-					trap_S_StartSound( gorg, ent->number, CHAN_WEAPON, fireEchosound[c] );
+					trap_S_StartSoundEx( gorg, ent->number, CHAN_WEAPON, fireEchosound[c], SND_NOCUT );
 				}
 			}
 		}
 	}
 
-	if ( weap->ejectBrassFunc && cg_brassTime.integer > 0 ) {
-		weap->ejectBrassFunc( cent );
+	if (cent->currentState.aiChar) {
+		return;
 	}
+
+	// do brass ejection with special delays for some weapons
+	if ( weap->ejectBrassFunc && cg_brassTime.integer > 0 ) {
+		   if (cg.predictedPlayerState.ammoclip[cent->currentState.weapon] == 0) {
+			   weap->ejectBrassFunc( cent, ammoTable[cent->currentState.weapon].brassDelayEmpty );
+		   } else {
+			   weap->ejectBrassFunc( cent, ammoTable[cent->currentState.weapon].brassDelay );
+		   }
+	    }
 }
 
 
@@ -7285,7 +7547,6 @@ void CG_MissileHitWall( int weapon, int clientNum, vec3_t origin, vec3_t dir, in
 
 	switch ( weapon ) {
 	case WP_KNIFE:
-	case WP_DAGGER:
 		sfx     = cgs.media.sfx_knifehit[4];    // different values for different types (stone/metal/wood/etc.)
 		mark    = cgs.media.bulletMarkShader;
 		radius  = 1 + rand() % 2;
@@ -7311,19 +7572,18 @@ void CG_MissileHitWall( int weapon, int clientNum, vec3_t origin, vec3_t dir, in
 	case WP_MP40:
 	case WP_MP34:
 	case WP_TT33:
-	case WP_P38:
 	case WP_HDM:
 	case WP_PPSH:
 	case WP_MOSIN:
 	case WP_G43:
 	case WP_M1GARAND:
 	case WP_BAR:
+	case WP_M30:
 	case WP_MP44:
 	case WP_MG42M:
 	case WP_BROWNING:
 	case WP_M97:
 	case WP_AUTO5:
-	case WP_M30:
 	case WP_REVOLVER:
 	case WP_FG42:
 	case WP_FG42SCOPE:
@@ -7552,6 +7812,47 @@ void CG_MissileHitWall( int weapon, int clientNum, vec3_t origin, vec3_t dir, in
 						  1400,             // duration
 						  7 + rand() % 2 ); // count
 		break;
+	case WP_DYNAMITE_ENG:
+		shader = cgs.media.rocketExplosionShader;
+		sfx = cgs.media.sfx_dynamiteexp;
+		sfx2 = cgs.media.sfx_dynamiteexpDist;
+		sfx2range = 400;
+		mark = cgs.media.burnMarkShader;
+		radius = 64;
+		light = 300;
+		isSprite = qtrue;
+		duration = 1000;
+		lightColor[0] = 0.75;
+		lightColor[1] = 0.5;
+		lightColor[2] = 0.1;
+
+		shakeAmt = 0.25f;
+		shakeDur = 2800;
+		shakeRad = 8192;
+			for ( i = 0; i < 5; i++ ) {
+				for ( j = 0; j < 3; j++ )
+					sprOrg[j] = origin[j] + 64 * dir[j] + 24 * crandom();
+				sprVel[2] += rand() % 50;
+				CG_ParticleExplosion( "blacksmokeanimb", sprOrg, sprVel,
+									  3500 + rand() % 250,          // duration
+									  10,                           // startsize
+									  250 + rand() % 60 );     
+									       // endsize
+			}
+			VectorMA( origin, 16, dir, sprOrg );
+			VectorScale( dir, 100, sprVel );
+
+			// trying this one just for now just for variety
+			CG_ParticleExplosion( "explode1", sprOrg, sprVel,
+								  1200,         // duration
+								  9,            // startsize
+								  300 );        // endsize
+
+			CG_AddDebris( origin, dir,
+						  280,              // speed
+						  1400,             // duration
+						  7 + rand() % 2 ); // count
+		break;
 
 	case WP_GRENADE_LAUNCHER:
 	case WP_GRENADE_PINEAPPLE:
@@ -7602,6 +7903,7 @@ void CG_MissileHitWall( int weapon, int clientNum, vec3_t origin, vec3_t dir, in
 	case VERYBIGEXPLOSION:
 	case WP_PANZERFAUST:
     case WP_AIRSTRIKE:
+	case WP_ARTY:
 		sfx = cgs.media.sfx_rockexp;
 		sfx2 = cgs.media.sfx_rockexpDist;
 		sfx2range = 800;
@@ -7801,7 +8103,6 @@ void CG_MissileHitPlayer( centity_t *cent, int weapon, vec3_t origin, vec3_t dir
 	switch ( weapon ) {
 		// knives just make the flesh hit sound.  no other effects
 	case WP_KNIFE:
-	case WP_DAGGER:
 		i = rand() % 4;
 		if ( cgs.media.sfx_knifehit[i] ) {
 			trap_S_StartSound( origin, cent->currentState.number, CHAN_WEAPON, cgs.media.sfx_knifehit[i] );
@@ -8068,12 +8369,12 @@ static qboolean CG_CalcMuzzlePoint( int entityNum, vec3_t muzzle ) {
 	centity_t   *cent;
 
 	cent = &cg_entities[entityNum];
-	if (entityNum == cg.snap->ps.clientNum) {
+	if ( entityNum == cg.snap->ps.clientNum ) {
 		vec3_t angles;
-		if (cent->currentState.weapon == WP_AKIMBO && BG_AkimboFireSequence(WP_AKIMBO, cg.snap->ps.ammoclip[WP_AKIMBO], cg.snap->ps.ammoclip[WP_COLT], vr->akimboTriggerState)) {
+		if (cent->currentState.weapon == WP_AKIMBO && BG_AkimboFireSequence(WP_AKIMBO, cg.snap->ps.ammoclip[WP_AKIMBO], vr->akimboTriggerState)) {
 			CG_CalculateOffhandVRWeaponPosition(muzzle, angles);
 		}
-		else if (cent->currentState.weapon == WP_DUAL_TT33 && BG_AkimboFireSequence(WP_DUAL_TT33, cg.snap->ps.ammoclip[WP_DUAL_TT33], cg.snap->ps.ammoclip[WP_TT33], vr->akimboTriggerState)) {
+		else if (cent->currentState.weapon == WP_DUAL_TT33 && BG_AkimboFireSequence(WP_DUAL_TT33, cg.snap->ps.ammoclip[WP_DUAL_TT33], vr->akimboTriggerState)) {
 			CG_CalculateOffhandVRWeaponPosition(muzzle, angles);
 		}
 		else {
@@ -8081,7 +8382,7 @@ static qboolean CG_CalcMuzzlePoint( int entityNum, vec3_t muzzle ) {
 		}
 
 		AngleVectors(angles, forward, NULL, NULL);	
-		VectorMA(muzzle, 14, forward, muzzle);
+		VectorMA( muzzle, 14, forward, muzzle );
 
 		return qtrue;
 	}
@@ -8283,4 +8584,202 @@ void CG_ClientDamage( int entnum, int enemynum, int id ) {
 	}
 	trap_SendClientCommand( va( "cld %i %i %i", entnum, enemynum, id ) );
 }
+
+
+static qboolean CG_AA_ValidateTarget( int entNum ) {
+    if ( entNum == ENTITYNUM_WORLD || entNum < 0 ) {
+        return qfalse;
+    }
+
+    // Only characters
+    if ( cg_entities[ entNum ].currentState.eType != ET_PLAYER ) {
+        return qfalse;
+    }
+
+    // Reject invis
+    if ( cg_entities[ entNum ].currentState.powerups & ( 1 << PW_INVIS ) ) {
+        return qfalse;
+    }
+
+	{
+		int myTeam = cg.snap->ps.persistant[PERS_TEAM];
+		int hisTeam = cg_entities[entNum].currentState.teamNum;
+
+		// If hisTeam is known and equals ours -> friendly, reject
+		if (hisTeam != 0 && hisTeam == myTeam)
+		{
+			return qfalse;
+		}
+	}
+
+	// LOS check (prevents through-walls)
+    {
+        trace_t los;
+        vec3_t target;
+
+        VectorCopy( cg_entities[ entNum ].lerpOrigin, target );
+        target[2] += 35.0f; // chest-ish
+
+        CG_Trace( &los,
+                  cg.refdef.vieworg,
+                  vec3_origin, vec3_origin,
+                  target,
+                  cg.snap->ps.clientNum,
+                  CONTENTS_SOLID );
+
+        if ( los.fraction < 0.999f ) {
+            return qfalse;
+        }
+    }
+
+    return qtrue;
+}
+
+
+void CG_UpdateAimAssist( void ) {
+    cg.aaStrength = 0.0f;
+    cg.aaDYaw     = 0.0f;
+    cg.aaDPitch   = 0.0f;
+    cg.aaEntNum   = -1;
+
+    if ( !cg.snap ) {
+        return;
+    }
+    if ( cg.renderingThirdPerson ) {
+        return;
+    }
+    if ( cg.snap->ps.persistant[PERS_TEAM] == TEAM_SPECTATOR ) {
+        return;
+    }
+
+
+	float coneDeg = 4.5f;
+	if (cg.zoomed || cg.zoomedScope || cg.simpleZoomed)
+	{					
+		coneDeg = 6.0f; 
+	}
+
+	// Direction offset scalar for the cone
+    const float cone = tanf( coneDeg * ( M_PI / 180.0f ) );
+
+    vec3_t start;
+    VectorCopy( cg.refdef.vieworg, start );
+
+    // 9-sample: center + 4 cardinals + 4 diagonals
+    static const float samples[9][2] = {
+        { 0,  0 },   // center
+        { 1,  0 },   // right
+        { -1, 0 },   // left
+        { 0,  1 },   // up
+        { 0, -1 },   // down
+        { 1,  1 },   // up-right
+        { 1, -1 },   // down-right
+        { -1, 1 },   // up-left
+        { -1, -1 }   // down-left
+    };
+
+    int   bestEnt  = -1;
+    float bestFrac = 999.0f; // 0=center, 1=edge (normalized)
+
+    for ( int i = 0; i < 9; i++ ) {
+        vec3_t dir, end;
+
+        // dir = forward + right*(x*cone) + up*(y*cone)
+        VectorCopy( cg.refdef.viewaxis[0], dir );
+        VectorMA( dir, samples[i][0] * cone, cg.refdef.viewaxis[1], dir );
+        VectorMA( dir, samples[i][1] * cone, cg.refdef.viewaxis[2], dir );
+        VectorNormalize( dir );
+
+        VectorMA( start, 4096.0f, dir, end );
+
+        trace_t tr;
+        CG_Trace( &tr, start, vec3_origin, vec3_origin, end,
+                  cg.snap->ps.clientNum, CONTENTS_BODY );
+
+        if ( tr.entityNum == ENTITYNUM_WORLD ) {
+            continue;
+        }
+
+        if ( !CG_AA_ValidateTarget( tr.entityNum ) ) {
+            continue;
+        }
+
+        // Normalized distance from center:
+        // samples are in {0,1,sqrt(2)} so normalize by sqrt(2)
+        {
+            const float sx = samples[i][0];
+            const float sy = samples[i][1];
+            const float mag = sqrtf( sx*sx + sy*sy );            // 0, 1, 1.414
+            const float frac = mag / 1.41421356f;               // 0..1
+
+            // Prefer the closest-to-center hit. If tie, keep the earlier (center wins).
+            if ( frac < bestFrac ) {
+                bestFrac = frac;
+                bestEnt  = tr.entityNum;
+            }
+        }
+    }
+
+    if ( bestEnt < 0 ) {
+        return;
+    }
+
+    // Strength mapping:
+    // bestFrac: 0 (center) .. 1 (outer ring)
+    // Convert to strength in [0..1], with a floor so it engages near the target.
+    {
+		float s = 1.0f - bestFrac; // 0..1
+		s = s * s;				   // keep a curve (optional)
+		s = 0.20f + (s * 0.80f);   // floor 0.20 (tune 0.15..0.30)
+		if (s > 1.0f)
+			s = 1.0f;
+		cg.aaStrength = s;
+	}
+
+    cg.aaEntNum = bestEnt;
+
+    // Compute dyaw/dpitch in DEGREES using viewaxis directly (robust; no refdefViewAngles needed)
+    {
+        vec3_t target, to, toN;
+        float  yawErr, pitchErr;
+
+        VectorCopy( cg_entities[ bestEnt ].lerpOrigin, target );
+        target[2] += 35.0f; // chest-ish; tune later if you want head
+
+        VectorSubtract( target, cg.refdef.vieworg, to );
+        VectorCopy( to, toN );
+        VectorNormalize( toN );
+
+        // Forward/right/up axes
+        // viewaxis[0] = forward, [1] = right, [2] = up
+        // Compute angular error around yaw and pitch from dot products.
+        // yaw error: angle in the plane (forward/right)
+        // pitch error: angle in the plane (forward/up)
+        {
+            float f = DotProduct( toN, cg.refdef.viewaxis[0] );
+            float r = DotProduct( toN, cg.refdef.viewaxis[1] );
+            float u = DotProduct( toN, cg.refdef.viewaxis[2] );
+
+            // atan2 gives signed angle in radians; convert to degrees
+            yawErr   = atan2f( r, f ) * ( 180.0f / M_PI );
+            pitchErr = -atan2f( u, f ) * ( 180.0f / M_PI ); // minus so positive pitch means look up (typical)
+        }
+
+        cg.aaDYaw   = yawErr;    // degrees, signed
+        cg.aaDPitch = pitchErr;  // degrees, signed
+    }
+
+    // Smooth strength (prevents flicker)
+    {
+        float targetS = cg.aaStrength;
+        float rateUp  = 0.35f;   // faster lock
+        float rateDn  = 0.20f;   // slower release
+
+        float rate = ( targetS > cg.aaStrengthSmoothed ) ? rateUp : rateDn;
+        cg.aaStrengthSmoothed = cg.aaStrengthSmoothed + ( targetS - cg.aaStrengthSmoothed ) * rate;
+
+        cg.aaStrength = cg.aaStrengthSmoothed;
+    }
+}
+
 

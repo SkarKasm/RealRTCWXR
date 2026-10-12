@@ -657,6 +657,8 @@ void ReadClient( fileHandle_t f, gclient_t *client, int size ) {
 	// now copy the temp structure into the existing structure
 	memcpy( client, &temp, size );
 
+	client->pers.weaponWheelOpen = qfalse;
+
 	// make sure they face the right way
 	//client->ps.pm_flags |= PMF_RESPAWNED;
 	// don't allow full run speed for a bit
@@ -1122,7 +1124,7 @@ qboolean G_SaveGame( char *username ) {
 	AICast_AgePlayTime( 0 );
 
 	if ( !username ) {
-		username = "current";
+		username = "current_realrtcw";
 	}
 
 	// validate the filename
@@ -1401,7 +1403,7 @@ qboolean G_SaveGame( char *username ) {
 ===============
 G_LoadGame
 
-  Always loads in "current.svg". So if loading a specific savegame, first copy it to that.
+  Always loads in "current_realrtcw.svg". So if loading a specific savegame, first copy it to that.
 ===============
 */
 void G_LoadGame( char *filename ) {
@@ -1423,7 +1425,7 @@ void G_LoadGame( char *filename ) {
 	G_DPrintf( "G_LoadGame '%s'\n", filename );
 
 	// enforce the "current" savegame, since that is used for all loads
-	filename = "save\\current.svg";
+	filename = "save\\current_realrtcw.svg";
 
 	// open the file
 	if ( trap_FS_FOpenFile( filename, &f, FS_READ ) < 0 ) {
@@ -1431,21 +1433,13 @@ void G_LoadGame( char *filename ) {
 	}
 
 	// read the version
-	trap_FS_Read( &i, sizeof( i ), f );
-	// TTimo
-	// show_bug.cgi?id=434
-	// 17 is the only version actually out in the wild
-	if ( i != SAVE_VERSION && i != 17 && i != 13 && i != 14 && i != 15 ) {    // 13 is beta7, 14 is pre "SA_MOVEDSTUFF"
-		trap_FS_FCloseFile( f );
-		G_Error( "G_LoadGame: savegame '%s' is wrong version (%i, should be %i)\n", filename, i, SAVE_VERSION );
+	trap_FS_Read(&i, sizeof(i), f);
+	if (i != SAVE_VERSION)
+	{
+		trap_FS_FCloseFile(f);
+		G_Error("Savegame wrong version (%i, expected %i). Old saves are not compatible with this update.\n", i, SAVE_VERSION);
 	}
 	ver = i;
-
-	if ( ver == 17 ) {
-		// 17 saved games can be buggy (bug #434), let's just warn about it
-		G_Printf( "WARNING: backward compatibility, loading a version 17 saved game.\n"
-				  "some version 17 saved games may cause crashes during play.\n" );
-	}
 
 	// read the mapname (this is only used in the sever exe, so just discard it)
 	trap_FS_Read( mapname, MAX_QPATH, f );
@@ -1545,7 +1539,7 @@ void G_LoadGame( char *filename ) {
 			// set the skill level
 			trap_Cvar_Set( "g_gameskill", va( "%i",i ) );
 			// update this
-			aicast_skillscale = (float)i / (float)GSKILL_REALISM;
+			aicast_skillscale = (float)i / (float)GSKILL_SURVIVAL;
 		}
 
 		if ( ver > 13 ) {
@@ -1697,7 +1691,7 @@ void G_LoadGame( char *filename ) {
 			// set the skill level
 			trap_Cvar_Set( "g_gameskill", va( "%i",i ) );
 			// update this
-			aicast_skillscale = (float)i / (float)GSKILL_REALISM;
+			aicast_skillscale = (float)i / (float)GSKILL_SURVIVAL;
 		}
 
 		if ( ver > 13 ) {

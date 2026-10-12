@@ -37,8 +37,12 @@ If you have questions concerning this license or the applicable additional terms
  *				movers and respawn apropriately.
  *
 */
+#include <pthread.h>
+#include <unistd.h>
 
 #include "g_local.h"
+
+#include "g_survival.h"
 
 #include "../steam/steam.h"
 
@@ -51,6 +55,7 @@ If you have questions concerning this license or the applicable additional terms
 #define RESPAWN_HEALTH      35
 #define RESPAWN_AMMO        40
 #define RESPAWN_HOLDABLE    60
+#define RESPAWN_PERK        65
 #define RESPAWN_MEGAHEALTH  120
 #define RESPAWN_POWERUP     120
 #define RESPAWN_PARTIAL     998     // for multi-stage ammo/health
@@ -58,6 +63,24 @@ If you have questions concerning this license or the applicable additional terms
 
 
 //======================================================================
+
+weapon_t GetComplexWeapon( weapon_t weapon );
+weapon_t GetSimpleWeapon( weapon_t weapon );
+qboolean IsWeaponComplex( weapon_t weapon );
+
+
+void *remove_powerup_after_delay(void *arg) {
+    gentity_t *other = (gentity_t *)arg;
+
+    // Sleep for 30 seconds
+    sleep(30);
+
+    // Remove the FL_NOTARGET flag
+    other->flags &= ~FL_NOTARGET;
+
+    return NULL;
+}
+
 
 int Pickup_Powerup( gentity_t *ent, gentity_t *other ) {
 	int quantity;
@@ -96,6 +119,36 @@ int Pickup_Powerup( gentity_t *ent, gentity_t *other ) {
 		if ( other->client->ps.powerups[PW_NOFATIGUE] > 60000 ) {
 			other->client->ps.powerups[PW_NOFATIGUE] = 60000;
 		}
+	}
+
+	if (ent->item->giTag == PW_AMMO)
+	{
+		// Restore ammo for every weapon the player has
+		for (weapon_t w = WP_KNIFE; w < WP_NUM_WEAPONS; w++)
+		{
+			if (COM_BitCheck(other->client->ps.weapons, w))
+			{
+				int ammo = BG_GetMaxAmmo(&other->client->ps, w, svParams.ltAmmoBonus);
+
+				Add_Ammo(other, w, ammo, qtrue);
+			}
+		}
+	}
+
+	// DIRTY HACK!!!!! If the invisibility powerup is picked up, set FL_NOTARGET and start a timer to remove it
+    if (ent->item->giTag == PW_INVIS) {
+        other->flags |= FL_NOTARGET;
+
+        pthread_t thread_id;
+        pthread_create(&thread_id, NULL, remove_powerup_after_delay, (void *)other);
+    }
+
+	if (!g_cheats.integer &&
+		(other->client->ps.powerups[PW_BATTLESUIT_SURV] > level.time) &&
+		(other->client->ps.powerups[PW_VAMPIRE] > level.time) &&
+		(other->client->ps.powerups[PW_QUAD] > level.time))
+	{
+		steamSetAchievement("ACH_UBER_PW");
 	}
 
 	if ( ent->s.density == 2 ) {   // multi-stage health first stage
@@ -146,13 +199,151 @@ int Pickup_Clipboard( gentity_t *ent, gentity_t *other ) {
 Pickup_Treasure
 ==============
 */
-int Pickup_Treasure( gentity_t *ent, gentity_t *other ) {
-	gentity_t *player = AICast_FindEntityForName( "player" );
-	player->numTreasureFound++;
-	G_SendMissionStats();
-	return RESPAWN_SP;  // no respawn
+int Pickup_Treasure(gentity_t *ent, gentity_t *other) {
+    gentity_t *player = AICast_FindEntityForName("player");
+
+    if (g_gametype.integer == GT_SURVIVAL) {
+        Survival_PickupTreasure(other);
+    } else {
+        if (player) {
+            player->numTreasureFound++;
+            G_SendMissionStats();
+        }
+    }
+
+    return RESPAWN_SP;
 }
 
+// Tides of War Cross
+void CrossThink( gentity_t *timer ) {
+	gentity_t *targ;
+	gentity_t *owner;
+
+	if ( !timer || !timer->inuse ) {
+		return;
+	}
+
+	targ  = timer->enemy;       // stored target
+	owner = timer->parent;      // stored owner (may be NULL)
+
+	if ( targ && targ->inuse && targ->health > 0 ) {
+		if ( !owner || !owner->inuse ) {
+			owner = &g_entities[ENTITYNUM_WORLD];
+		}
+
+		G_Damage( targ, owner, owner, vec3_origin, targ->r.currentOrigin,
+		          9999, DAMAGE_NO_PROTECTION, MOD_FLAMETHROWER );
+	}
+
+	G_FreeEntity( timer );
+}
+
+void CrossBurn( gentity_t *owner, gentity_t *targ ) {
+	gentity_t *timer;
+
+	if ( !targ || !targ->inuse ) return;
+	if ( targ->health <= 0 ) return;
+	if ( !targ->client ) return;
+
+	if ( targ->flameQuotaTime && targ->flameQuota > 0 ) {
+		int damage = 1;
+		targ->flameQuota -= (int)( (((float)(level.time - targ->flameQuotaTime)) / 1000.0f) * (float)damage / 2.0f );
+		if ( targ->flameQuota < 0 ) targ->flameQuota = 0;
+	}
+
+	targ->flameQuota += 999;
+	targ->flameQuotaTime = level.time;
+
+	if ( targ->s.onFireEnd < level.time ) {
+		targ->s.onFireStart = level.time;
+	}
+	targ->s.onFireEnd   = level.time + 4000;
+	targ->flameBurnEnt  = owner ? owner->s.number : ENTITYNUM_WORLD;
+	targ->client->ps.onFireStart = level.time;
+
+	// ---- schedule delayed kill without touching targ->think ----
+	timer = G_Spawn();
+	timer->classname = "cross_kill_timer";
+	timer->r.svFlags = SVF_NOCLIENT;
+
+	timer->enemy  = targ;     // target to kill later
+	timer->parent = owner;    // who caused it
+
+	timer->think = CrossThink;
+	timer->nextthink = level.time + 1500;  // 1.5s (use 1000..2000)
+}
+
+void EMP_ClearFxThink(gentity_t *timer) {
+    gentity_t *targ;
+    if (!timer || !timer->inuse) return;
+
+    targ = timer->enemy;
+    if (targ && targ->inuse && targ->client) {
+
+        // Clear FX when the latest EMP FX really ended
+        if (targ->empFxUntil <= level.time) {
+            targ->client->ps.powerups[PW_QUAD] = 0;
+        }
+
+        // Wake-up anim when the latest EMP disable really ended
+        if (targ->empDisabledUntil <= level.time) {
+            if (targ->aiCharacter == AICHAR_PROTOSOLDIER || targ->aiCharacter == AICHAR_SUPERSOLDIER || targ->aiCharacter == AICHAR_SUPERSOLDIER_LAB) {
+                if (targ->empAnimState == 1 || targ->empAnimState == 2) {
+                    BG_PlayAnimName(&targ->client->ps, "come_alive", ANIM_BP_TORSO, qtrue, qfalse, qtrue);
+					targ->client->ps.legsTimer = 0;
+					targ->client->ps.torsoTimer = 7400;
+                    targ->empAnimState = 3;
+                }
+            }
+        }
+    }
+
+    G_FreeEntity(timer);
+}
+
+void EMP_Apply(gentity_t *owner, gentity_t *targ, int durationMs) {
+    gentity_t *timer;
+
+    if (!targ || !targ->inuse || !targ->client) return;
+    if (targ->health <= 0) return;
+
+    // Extend/refresh EMP
+	targ->empDisabledUntil = level.time + durationMs;
+	targ->empFxUntil = level.time + durationMs;
+	targ->client->ps.powerups[PW_QUAD] = level.time + durationMs;
+
+	// Start shutdown anim once per EMP "instance" (handles refresh)
+	if (targ->empAnimToken != targ->empDisabledUntil)
+	{
+		targ->empAnimToken = targ->empDisabledUntil;
+		targ->empAnimState = 0;
+	}
+
+	if (targ->aiCharacter == AICHAR_PROTOSOLDIER || targ->aiCharacter == AICHAR_SUPERSOLDIER || targ->aiCharacter == AICHAR_SUPERSOLDIER_LAB )
+	{
+		// only start the shutdown once
+		if (targ->empAnimState == 0)
+		{
+			BG_PlayAnimName(&targ->client->ps, "power_down", ANIM_BP_LEGS, qtrue, qfalse, qtrue);
+			BG_PlayAnimName(&targ->client->ps, "power_down", ANIM_BP_TORSO, qtrue, qfalse, qtrue);
+
+			// hold long enough so it completes (77 frames @ 15 fps ≈ 5.1s)
+			// timer is ms; set a bit longer than needed
+			targ->client->ps.legsTimer = 5200;
+			targ->client->ps.torsoTimer = 5200;
+
+			targ->empAnimState = 1;
+		}
+	}
+
+    // Timer to clear FX later (don’t touch targ->think)
+    timer = G_Spawn();
+    timer->classname = "emp_clearfx_timer";
+    timer->r.svFlags = SVF_NOCLIENT;
+    timer->enemy = targ;
+    timer->think = EMP_ClearFxThink;
+    timer->nextthink = level.time + durationMs;
+}
 
 /*
 ==============
@@ -162,15 +353,16 @@ UseHoldableItem
 */
 void UseHoldableItem( gentity_t *ent, int item ) {
 	switch ( item ) {
-	case HI_WINE:           // 1921 Chateu Lafite - gives 25 pts health up to max health
+	case HI_WINE:           // 1921 Chateu Lafite - gives 25 pts health, overheals up to 200% max health in modern mode
 		ent->health += 25;
-		if ( !g_cheats.integer ) 
+		if ( !g_cheats.integer )
 		{
 		steamSetAchievement("ACH_WINE");
 		}
 		if (!g_decaychallenge.integer){
-		if ( ent->health > ent->client->ps.stats[STAT_MAX_HEALTH] ) {
-			ent->health = ent->client->ps.stats[STAT_MAX_HEALTH];
+		int wineCap = ( g_overheal.integer == 1 ) ? ent->client->ps.stats[STAT_MAX_HEALTH] * 2 : ent->client->ps.stats[STAT_MAX_HEALTH];
+		if ( ent->health > wineCap ) {
+			ent->health = wineCap;
 		}
 		}
 		break;
@@ -277,23 +469,136 @@ void UseHoldableItem( gentity_t *ent, int item ) {
 
 		break;
 
-	case HI_BANDAGES:       
+	case HI_BANDAGES:
 		ent->health += 20;
-		if ( !g_cheats.integer ) 
+		if ( !g_cheats.integer )
 		{
 		steamSetAchievement("ACH_BANDAGES");
 		}
 
 		if (!g_decaychallenge.integer){
-		if ( ent->health > ent->client->ps.stats[STAT_MAX_HEALTH] ) {
-		ent->health = ent->client->ps.stats[STAT_MAX_HEALTH];
+		int bandageCap = ( g_overheal.integer == 1 ) ? ent->client->ps.stats[STAT_MAX_HEALTH] * 2 : ent->client->ps.stats[STAT_MAX_HEALTH];
+		if ( ent->health > bandageCap ) {
+		ent->health = bandageCap;
 		}
 		}
 		break;
+	case HI_CROSS:
+		const float radius = 512.0f; // tune
+		int touch[MAX_GENTITIES];
+		int num, i;
+		vec3_t mins, maxs, delta;
+		gentity_t *targ;
 
+		VectorSet(mins, ent->r.currentOrigin[0] - radius, ent->r.currentOrigin[1] - radius, ent->r.currentOrigin[2] - radius);
+		VectorSet(maxs, ent->r.currentOrigin[0] + radius, ent->r.currentOrigin[1] + radius, ent->r.currentOrigin[2] + radius);
+
+		num = trap_EntitiesInBox(mins, maxs, touch, MAX_GENTITIES);
+
+		if ( !g_cheats.integer ) 
+		{
+		steamSetAchievement("ACH_ITEM_CROSS");
+		}
+
+		for (i = 0; i < num; i++)
+		{
+			targ = &g_entities[touch[i]];
+
+			if (!targ->inuse || targ->health <= 0)
+				continue;
+			if (!targ->client)
+				continue;
+
+			if (targ->aiCharacter != AICHAR_ZOMBIE 
+				&& targ->aiCharacter != AICHAR_WARZOMBIE 
+				&& targ->aiCharacter != AICHAR_PRIEST 
+				&& targ->aiCharacter != AICHAR_ZOMBIE_SURV 
+				&& targ->aiCharacter != AICHAR_ZOMBIE_GHOST 
+				&& targ->aiCharacter != AICHAR_ZOMBIE_FLAME)
+			{
+				continue;
+			}
+
+			// real radius check
+			VectorSubtract(targ->r.currentOrigin, ent->r.currentOrigin, delta);
+			if (VectorLength(delta) > radius)
+				continue;
+
+			CrossBurn(ent, targ);
+		};
+		break;
+	case HI_EMP:
+	{
+		const float radius = 512.0f;
+		const int duration = 8500;
+		int touch[MAX_GENTITIES];
+		int num, i;
+		vec3_t mins, maxs, delta;
+		gentity_t *targ;
+
+		VectorSet(mins, ent->r.currentOrigin[0] - radius, ent->r.currentOrigin[1] - radius, ent->r.currentOrigin[2] - radius);
+		VectorSet(maxs, ent->r.currentOrigin[0] + radius, ent->r.currentOrigin[1] + radius, ent->r.currentOrigin[2] + radius);
+
+		num = trap_EntitiesInBox(mins, maxs, touch, MAX_GENTITIES);
+
+		G_AddEvent( ent, EV_EMP_WAVE, 0 );
+
+		if ( !g_cheats.integer ) 
+		{
+		steamSetAchievement("ACH_ITEM_EMP");
+		}
+		
+		for (i = 0; i < num; i++)
+		{
+			targ = &g_entities[touch[i]];
+
+			if (!targ->inuse || targ->health <= 0)
+				continue;
+			if (!targ->client)
+				continue;
+
+			// Only X-creatures
+			if (targ->aiCharacter != AICHAR_LOPER &&
+				targ->aiCharacter != AICHAR_PROTOSOLDIER &&
+			    targ->aiCharacter != AICHAR_XSHEPHERD &&
+			    targ->aiCharacter != AICHAR_SUPERSOLDIER &&
+			    targ->aiCharacter != AICHAR_SUPERSOLDIER_LAB)
+			{
+				continue;
+			}
+
+
+			VectorSubtract(targ->r.currentOrigin, ent->r.currentOrigin, delta);
+			if (VectorLength(delta) > radius)
+				continue;
+
+			EMP_Apply(ent, targ, duration);
+		}
+		break;
+	}
+	case HI_XSHIELD:
+	{
+		const int duration = 10000;
+
+		// already active? ignore (optional)
+		if (ent->client->ps.powerups[PW_XSHIELD] > level.time)
+		{
+			break;
+		}
+
+		if ( !g_cheats.integer ) 
+		{
+		steamSetAchievement("ACH_ITEM_XSHIELD");
+		}
+
+		ent->client->ps.powerups[PW_XSHIELD] = level.time + duration;
+
+		break;
+	}
 	case HI_BOOK1:
 	case HI_BOOK2:
 	case HI_BOOK3:
+	case HI_BOOK4:
 	if ( !g_cheats.integer ) 
 	{
 	    steamSetAchievement("ACH_READ_BOOK");
@@ -332,112 +637,129 @@ int Pickup_Holdable( gentity_t *ent, gentity_t *other ) {
 
 //======================================================================
 
+int Pickup_Perk( gentity_t *ent, gentity_t *other ) {
+	gitem_t *item;
+
+	item = ent->item;
+
+	other->client->ps.perks[item->giTag] += 1;   // add default of 1
+
+	other->client->ps.stats[STAT_PERK] |= ( 1 << ent->item->giTag );   //----(SA)	added
+
+		if ( !( ent->spawnflags & 8 ) ) {
+			return RESPAWN_SP;
+		}
+
+	return RESPAWN_PERK;
+}
+
+
+//======================================================================
+
 /*
 ==============
 Fill_Clip
 	push reserve ammo into available space in the clip
 ==============
 */
-void Fill_Clip( playerState_t *ps, int weapon ) {
-	int inclip, maxclip, ammomove;
-	int ammoweap = BG_FindAmmoForWeapon( weapon );
-
-	if ( weapon < WP_LUGER || weapon >= WP_NUM_WEAPONS ) {
+void Fill_Clip(playerState_t *ps, int weapon) {
+	if (weapon < WP_LUGER || weapon >= WP_NUM_WEAPONS) {
 		return;
 	}
 
-	if ( g_dmflags.integer & DF_NO_WEAPRELOAD ) {
+	if (g_dmflags.integer & DF_NO_WEAPRELOAD) {
 		return;
 	}
 
-	inclip  = ps->ammoclip[BG_FindClipForWeapon( weapon )];
-	maxclip = ammoTable[weapon].maxclip;
+	int clipIndex = BG_FindClipForWeapon(weapon);
+	int ammoIndex = BG_FindAmmoForWeapon(weapon);
 
-	ammomove = maxclip - inclip;    // max amount that can be moved into the clip
+	int inclip   = ps->ammoclip[clipIndex];
+	int maxclip  = BG_GetMaxClip(ps, weapon);
+	int ammomove = maxclip - inclip;
 
 	// cap move amount if it's more than you've got in reserve
-	if ( ammomove > ps->ammo[ammoweap] ) {
-		ammomove = ps->ammo[ammoweap];
+	if (ammomove > ps->ammo[ammoIndex]) {
+		ammomove = ps->ammo[ammoIndex];
 	}
 
-	if ( ammomove ) {
-		if ( !ps->aiChar || ps->ammo[ammoweap] < 999 ) {  // RF, dont take ammo away if they need unlimited supplies
-			ps->ammo[ammoweap] -= ammomove;
+	if (ammomove > 0) {
+		if (!ps->aiChar || ps->ammo[ammoIndex] < 999) { // RF: allow infinite ammo for AI
+			ps->ammo[ammoIndex] -= ammomove;
 		}
-		ps->ammoclip[BG_FindClipForWeapon( weapon )] += ammomove;
+		ps->ammoclip[clipIndex] += ammomove;
 	}
 }
 
 /*
 ==============
 Add_Ammo
-	Try to always add ammo here unless you have specific needs
-	(like the AI "infinite ammo" where they get below 900 and force back up to 999)
-
-	fillClip will push the ammo straight through into the clip and leave the rest in reserve
 ==============
 */
-void Add_Ammo( gentity_t *ent, int weapon, int count, qboolean fillClip ) {
-	int ammoweap = BG_FindAmmoForWeapon( weapon );
-	qboolean noPack = qfalse;       // no extra ammo in your 'pack'
+void Add_Ammo(gentity_t *ent, int weapon, int count, qboolean fillClip) {
+	int ammoweap = BG_FindAmmoForWeapon(weapon);
+	qboolean noPack = qfalse; // no extra ammo in your 'pack'
 
 	ent->client->ps.ammo[ammoweap] += count;
 
-	switch ( ammoweap ) {
-		// some weaps load straight into the 'clip' since they have no storage outside the clip
-
-	case WP_GRENADE_LAUNCHER:       // make sure if he picks up a grenade that he get's the "launcher" too
-	case WP_GRENADE_PINEAPPLE:
-	case WP_DYNAMITE:
-	case WP_POISONGAS:
-    case WP_KNIFE:
-		COM_BitSet( ent->client->ps.weapons, ammoweap );
-	case WP_TESLA:
-	case WP_FLAMETHROWER:
-	case WP_HOLYCROSS:
-		noPack = qtrue;
-		break;
-	default:
-		break;
+	switch (ammoweap) {
+		// Some weapons load straight into the 'clip'
+		case WP_GRENADE_LAUNCHER:
+		case WP_GRENADE_PINEAPPLE:
+		case WP_DYNAMITE:
+		case WP_KNIFE:
+			COM_BitSet(ent->client->ps.weapons, ammoweap);
+		case WP_TESLA:
+		case WP_FLAMETHROWER:
+		case WP_HOLYCROSS:
+			noPack = qtrue;
+			break;
+		default:
+			break;
 	}
 
-	if ( fillClip || noPack ) {
-		Fill_Clip( &ent->client->ps, weapon );
+	if (fillClip || noPack) {
+		Fill_Clip(&ent->client->ps, weapon);
 	}
 
-	if ( ent->aiCharacter ) {
-		noPack = qfalse;    // let AI's deal with their own clip/ammo handling
-
+	if (ent->aiCharacter) {
+		noPack = qfalse; // let AI handle its own logic
 	}
-	// cap to max ammo
-	if ( noPack ) {
+
+	// Cap to max ammo
+	if (noPack) {
 		ent->client->ps.ammo[ammoweap] = 0;
 	} else {
-		if ( ent->client->ps.ammo[ammoweap] > ammoTable[ammoweap].maxammo ) {
-			ent->client->ps.ammo[ammoweap] = ammoTable[ammoweap].maxammo;
+		int maxAmmo = BG_GetMaxAmmo(&ent->client->ps, weapon, svParams.ltAmmoBonus);
+
+		if (ent->client->ps.ammo[ammoweap] > maxAmmo) {
+			ent->client->ps.ammo[ammoweap] = maxAmmo;
 		}
 
-		if ( count >= 999 ) { // 'really, give /all/'
+		// Special case: "give all"
+		if (count >= 999) {
 			ent->client->ps.ammo[ammoweap] = count;
 		}
 	}
 
-		switch (ammoweap) {
-		case WP_KNIFE:
-			ent->client->ps.ammoclip[ammoweap] += count;
+	// Special case: knife throwing ammo in clip
+	if (ammoweap == WP_KNIFE)
+	{
+		ent->client->ps.ammoclip[ammoweap] += count;
 
-			if( ent->client->ps.ammoclip[ammoweap] > ammoTable[ammoweap].maxammo ) {
-				ent->client->ps.ammoclip[ammoweap] = ammoTable[ammoweap].maxammo;
-			}
-			break;
+		int maxclip = BG_GetMaxClip(&ent->client->ps, WP_KNIFE);
+		if (ent->client->ps.ammoclip[ammoweap] > maxclip)
+		{
+			ent->client->ps.ammoclip[ammoweap] = maxclip;
+		}
 	}
 
-	if ( ent->client->ps.ammoclip[ammoweap] > ammoTable[ammoweap].maxclip ) {
-		ent->client->ps.ammoclip[ammoweap] = ammoTable[ammoweap].maxclip;
+	// Final clip clamp using upgrade-aware maxclip
+	int maxclip = BG_GetMaxClip(&ent->client->ps, weapon);
+	if (ent->client->ps.ammoclip[ammoweap] > maxclip) {
+		ent->client->ps.ammoclip[ammoweap] = maxclip;
 	}
-
 }
-
 
 /*
 ==============
@@ -446,6 +768,7 @@ Pickup_Ammo
 */
 int Pickup_Ammo( gentity_t *ent, gentity_t *other ) {
 	int quantity;
+
 
 			if (g_decaychallenge.integer) {
 			quantity = 999;
@@ -505,19 +828,26 @@ int Pickup_Weapon( gentity_t *ent, gentity_t *other ) {
 
 	weapon = ent->item->giTag;
 
-	if ( ent->count < 0 ) {
+	if (ent->count < 0)
+	{
 		quantity = 0; // None for you, sir!
-	} else {
-		if ( ent->count ) {
+	}
+	else
+	{
+		if (ent->count)
+		{
 			quantity = ent->count;
-		} else {
-			quantity = ( random() * ( ammoTable[weapon].maxclip - 4 ) ) + 4;    // giving 4-<item default count>
+		}
+		else
+		{
+			int maxclip = BG_GetMaxClip(&other->client->ps, weapon);
+			quantity = (random() * (maxclip - 4)) + 4; // giving 4 to <maxclip>
 		}
 
-		if (g_decaychallenge.integer) {
+		if (g_decaychallenge.integer)
+		{
 			quantity = 999;
 		}
-
 	}
 
 	if (( weapon == WP_PPSH ) && strstr (level.scriptAI, "Factory"))
@@ -565,15 +895,17 @@ int Pickup_Weapon( gentity_t *ent, gentity_t *other ) {
 		}
 	}
 
+	if (ent->item->giTag == WP_KNIFE)
+	{
+		int maxclip = BG_GetMaxClip(&other->client->ps, WP_KNIFE);
 
-		if ( ent->item->giTag == WP_KNIFE ){
-		if ( other->client->ps.ammoclip[ent->item->giTag] < ammoTable[WP_KNIFE].maxammo  ){
-			Add_Ammo( other, ent->item->giTag, 1, qfalse );
+		if (other->client->ps.ammoclip[WP_KNIFE] < maxclip)
+		{
+			Add_Ammo(other, WP_KNIFE, 1, qfalse);
 			return -1;
 		}
 		return 0;
 	}
-
 	// check if player already had the weapon
 	alreadyHave = COM_BitCheck( other->client->ps.weapons, weapon );
 
@@ -593,18 +925,18 @@ int Pickup_Weapon( gentity_t *ent, gentity_t *other ) {
 		COM_BitSet( other->client->ps.weapons, WP_FG42SCOPE );
 	} else if ( weapon == WP_SNIPERRIFLE ) {
 		COM_BitSet( other->client->ps.weapons, WP_MAUSER );
-	} else if (weapon == WP_SILENCER) {
-		COM_BitSet( other->client->ps.weapons, WP_LUGER );
 	} else if ( weapon == WP_M1GARAND ) {
 		COM_BitSet( other->client->ps.weapons, WP_M7 );
 	} else if ( weapon == WP_M7 ) {
 		COM_BitSet( other->client->ps.weapons, WP_M1GARAND );
 	} else if ( weapon == WP_DELISLESCOPE ) {
 		COM_BitSet( other->client->ps.weapons, WP_DELISLE );
+	} else if ( weapon == WP_DELISLE ) {
+		COM_BitSet( other->client->ps.weapons, WP_DELISLESCOPE );
 	} else if ( weapon == WP_M1941SCOPE ) {
 		COM_BitSet( other->client->ps.weapons, WP_M1941 );
 	}
-
+	
 	Add_Ammo( other, weapon, quantity, !alreadyHave );
 
 
@@ -615,18 +947,453 @@ int Pickup_Weapon( gentity_t *ent, gentity_t *other ) {
 	return g_weaponRespawn.integer;
 }
 
+//======================================================================
+
+int G_FindWeaponSlot( gentity_t *other, weapon_t weapon ) {
+	int i;
+
+	if (other->client->ps.stats[STAT_PLAYER_CLASS] == PC_SOLDIER)
+	{
+		for (i = 1; i < MAX_WEAPON_SLOTS_SOLDIER; ++i)
+		{
+			if (other->client->ps.weaponSlotsSoldier[i] == weapon)
+			{
+				return i;
+			}
+		}
+	}
+	else
+	{
+		for (i = 1; i < MAX_WEAPON_SLOTS; ++i)
+		{
+			if (other->client->ps.weaponSlots[i] == weapon)
+			{
+				return i;
+			}
+		}
+	}
+
+	return -1;
+}
+
+int G_GetFreeWeaponSlot( gentity_t *other ) {
+	return G_FindWeaponSlot( other, WP_NONE );
+}
+
+int GetCurrentSlotId( gentity_t *other ) {
+	int idx = G_FindWeaponSlot( other, other->client->ps.weapon );
+
+	if ( idx < 0 ) {
+		return G_FindWeaponSlot( other, GetComplexWeapon( other->client->ps.weapon ) );
+	}
+
+	return idx;
+}
+
+qboolean IsThereEmptySlot( gentity_t *other ) {
+	return G_GetFreeWeaponSlot( other ) > 0;
+}
+
+weapon_t GetComplexWeapon( weapon_t weapon ) {
+	switch ( weapon )
+	{
+	case WP_GARAND:
+	case WP_FG42:
+	case WP_M1GARAND:
+	case WP_COLT:
+	case WP_TT33:
+	case WP_MAUSER:
+	case WP_DELISLE:
+	case WP_M1941:
+		return GetWeaponTableData( weapon )->weapAlts;
+	default:
+		return weapon;
+	}
+}
+
+weapon_t GetSimpleWeapon( weapon_t weapon ) {
+	switch ( weapon )
+	{
+	case WP_SNOOPERSCOPE:
+	case WP_FG42SCOPE:
+	case WP_M7:
+	case WP_SNIPERRIFLE:
+	case WP_DELISLESCOPE:
+	case WP_M1941SCOPE:
+		return GetWeaponTableData( weapon )->weapAlts;
+	default:
+		return weapon;
+	}
+}
+
+qboolean IsWeaponComplex( weapon_t weapon ) {
+	switch ( weapon )
+	{
+	
+	case WP_GARAND:
+	case WP_FG42:
+	case WP_M1GARAND:
+	case WP_DELISLE:
+
+	case WP_SNOOPERSCOPE:
+	case WP_FG42SCOPE:
+	case WP_M7:
+	case WP_DELISLESCOPE:
+
+	// semi complex
+	case WP_SNIPERRIFLE:
+	case WP_M1941SCOPE:
+		return qtrue;
+	default:
+		return qfalse;
+	}
+}
+
+qboolean IsUpgradingWeapon( gentity_t *other, weapon_t weapon ) {
+	weapon_t simpleWeapon = GetSimpleWeapon( weapon );
+	weapon_t complexWeapon = GetComplexWeapon( weapon );
+	int simpleWeaponSlotId = G_FindWeaponSlot( other, simpleWeapon );
+
+	if ( simpleWeaponSlotId < 0 ) {
+		return qfalse;
+	}
+
+	if (other->client->ps.stats[STAT_PLAYER_CLASS] == PC_SOLDIER)
+	{
+		return simpleWeaponSlotId > 0 && other->client->ps.weaponSlotsSoldier[simpleWeaponSlotId] == simpleWeapon && weapon == complexWeapon;
+	}
+	else
+	{
+		return simpleWeaponSlotId > 0 && other->client->ps.weaponSlots[simpleWeaponSlotId] == simpleWeapon && weapon == complexWeapon;
+	}
+}
+
+qboolean NeedAmmo(gentity_t *other, weapon_t weapon) {
+	int ammoweap;
+
+	if (G_FindWeaponSlot(other, weapon) < 0) {
+		weapon_t altWeapon = GetWeaponTableData(weapon)->weapAlts;
+
+		if (!altWeapon) {
+			return qfalse;
+		}
+
+		if (G_FindWeaponSlot(other, altWeapon) < 0) {
+			return qfalse;
+		}
+
+		ammoweap = BG_FindAmmoForWeapon(altWeapon);
+	} else {
+		ammoweap = BG_FindAmmoForWeapon(weapon);
+	}
+
+	int maxAmmo = BG_GetMaxAmmo(&other->client->ps, ammoweap, svParams.ltAmmoBonus);
+	return other->client->ps.ammo[ammoweap] < maxAmmo;
+}
+
+/**
+ * @brief Remove Weapon
+ * @param[in] ent
+ * @param[in] weapon
+ */
+void G_RemoveWeapon( gentity_t *ent, weapon_t weapon ) {
+	if ( IsWeaponComplex( weapon ) ) {
+		weapon_t altWeapon = GetWeaponTableData( weapon )->weapAlts;
+		int complexWeaponSlotId = G_FindWeaponSlot( ent, weapon );
+		COM_BitClear( ent->client->ps.weapons, weapon );
+		COM_BitClear( ent->client->ps.weapons, altWeapon );
+		if (ent->client->ps.stats[STAT_PLAYER_CLASS] == PC_SOLDIER)
+		{
+			ent->client->ps.weaponSlotsSoldier[complexWeaponSlotId] = WP_NONE;
+		}
+		else
+		{
+			ent->client->ps.weaponSlots[complexWeaponSlotId] = WP_NONE;
+		}
+	} else {
+		int simpleSlotId = G_FindWeaponSlot( ent, weapon );
+		COM_BitClear( ent->client->ps.weapons, weapon );
+		if (ent->client->ps.stats[STAT_PLAYER_CLASS] == PC_SOLDIER)
+		{
+			ent->client->ps.weaponSlotsSoldier[ simpleSlotId ] = WP_NONE;
+		}
+		else
+		{
+		ent->client->ps.weaponSlots[ simpleSlotId ] = WP_NONE;
+		}
+	}
+
+	// Clear out upgraded weapon
+	ent->client->ps.weaponUpgraded[weapon] = 0;
+
+	// Clear out empty weapon, change to next best weapon
+	// 																G_AddEvent( ent, EV_CHANGE_WEAPON, 0 );
+
+	if ( weapon == ent->client->ps.weapon ) {
+		ent->client->ps.weapon = 0;
+	}
+}
+
+/**
+ * @brief Drop Weapon
+ * @param[in] ent
+ * @param[in] weapon
+ */
+void G_DropWeapon( gentity_t *ent, weapon_t weapon ) {
+	vec3_t    angles, velocity, org, offset, mins, maxs;
+	gclient_t *client = ent->client;
+	gitem_t   *item;
+	trace_t   tr;
+
+	if ( !IS_VALID_WEAPON( weapon ) ) {
+		return;
+	}
+
+	// item = BG_GetItem( GetWeaponTableData( weapon )->item );
+	item = BG_FindItemForWeapon( GetWeaponTableData( weapon )->weaponindex );
+
+	if ( item->giType != IT_WEAPON || item->giWeapon != weapon ) {
+		Com_Error( ERR_DROP, "Couldn't get item for weapon %i", weapon );
+	}
+
+	VectorCopy( client->ps.viewangles, angles );
+
+	// clamp pitch
+	if ( angles[ PITCH ] < -30 ) {
+		angles[ PITCH ] = -30;
+	} else if ( angles[ PITCH ] > 30 ) {
+		angles[ PITCH ] = 30;
+	}
+
+	AngleVectors( angles, velocity, NULL, NULL );
+	VectorScale( velocity, 64, offset );
+	offset[ 2 ] += client->ps.viewheight / 2.f;
+	VectorScale( velocity, 75, velocity );
+	velocity[ 2 ] += 50 + random( ) * 35;
+
+	VectorAdd( client->ps.origin, offset, org );
+
+	VectorSet( mins, -ITEM_RADIUS, -ITEM_RADIUS, 0 );
+	VectorSet( maxs, ITEM_RADIUS, ITEM_RADIUS, 2 * ITEM_RADIUS );
+
+	trap_Trace( &tr, client->ps.origin, mins, maxs, org, ent->s.number, MASK_SOLID );
+	VectorCopy( tr.endpos, org );
+
+	LaunchItem( item, org, velocity );
+
+	G_RemoveWeapon( ent, weapon );
+}
 
 //======================================================================
+
+qboolean Give_Weapon_New_Inventory( gentity_t *other, weapon_t weapon, qboolean needThrowItem ) {
+	if ( ( weapon == WP_PPSH ) && strstr ( level.scriptAI, "Factory" ) ) {
+		if ( !g_cheats.integer ) {
+			steamSetAchievement( "ACH_PPSH" );
+		}
+	}
+
+	if ( ( weapon == WP_MOSIN ) && strstr ( level.scriptAI, "Village2_118" ) ) {
+		if ( !g_cheats.integer ) {
+			steamSetAchievement( "ACH_MOSIN" );
+		}
+	}
+
+	if ( ( weapon == WP_TESLA ) && strstr ( level.scriptAI, "Escape #2" ) ) {
+		if ( !g_cheats.integer ) {
+			steamSetAchievement( "ACH_WINTERSTEIN_TESLA" );
+		}
+	}
+
+	if ( ( weapon == WP_REVOLVER ) && strstr ( level.scriptAI, "Escape #2") ) {
+		if ( !g_cheats.integer ) {
+			steamSetAchievement( "ACH_AGENT1" );
+		}
+	}
+
+	if ( !COM_BitCheck( other->client->ps.weapons, weapon ) ) {
+		if ( IsThereEmptySlot( other ) || IsUpgradingWeapon( other, weapon ) || other->client->latched_buttons & BUTTON_ACTIVATE ) {
+			if ( IsUpgradingWeapon( other, weapon ) ) {
+				weapon_t simpleWeapon = GetSimpleWeapon( weapon );
+				int simpleWeaponSlotId = G_FindWeaponSlot( other, simpleWeapon );
+				COM_BitSet( other->client->ps.weapons, weapon );
+				if (other->client->ps.stats[STAT_PLAYER_CLASS] == PC_SOLDIER) {
+					other->client->ps.weaponSlotsSoldier[simpleWeaponSlotId] = weapon;
+				}
+				else {
+					other->client->ps.weaponSlots[simpleWeaponSlotId] = weapon;
+				}
+
+			} else {
+				int slotId;
+
+				if ( IsThereEmptySlot( other ) ) {
+					int freeWeaponSlotId = G_GetFreeWeaponSlot( other );
+
+					slotId = freeWeaponSlotId;
+
+				} else {
+					int currentWeaponSlotId = GetCurrentSlotId( other );
+
+					if ( currentWeaponSlotId < 1 ) {
+						slotId = 1;
+
+					} else {
+						slotId = currentWeaponSlotId;
+					}
+
+					if ( needThrowItem ) {
+						if (other->client->ps.stats[STAT_PLAYER_CLASS] == PC_SOLDIER)
+						{
+							G_DropWeapon( other, other->client->ps.weaponSlotsSoldier[ slotId ] );
+						}
+						else
+						{
+							G_DropWeapon( other, other->client->ps.weaponSlots[ slotId ] );
+						}
+					} else {
+						if (other->client->ps.stats[STAT_PLAYER_CLASS] == PC_SOLDIER) {
+							G_RemoveWeapon( other, other->client->ps.weaponSlotsSoldier[slotId] );
+						}
+						else {
+							G_RemoveWeapon( other, other->client->ps.weaponSlots[slotId] );
+						}
+					}
+				}
+
+				if ( IsWeaponComplex( weapon ) ) {
+					weapon_t altWeapon = GetWeaponTableData(weapon)->weapAlts;
+					COM_BitSet(other->client->ps.weapons, weapon);
+					COM_BitSet(other->client->ps.weapons, altWeapon);
+					if (other->client->ps.stats[STAT_PLAYER_CLASS] == PC_SOLDIER)
+					{
+						other->client->ps.weaponSlotsSoldier[slotId] = weapon;
+					}
+					else
+					{
+						other->client->ps.weaponSlots[slotId] = weapon;
+					}
+				} else {
+					COM_BitSet( other->client->ps.weapons, weapon );
+					if (other->client->ps.stats[STAT_PLAYER_CLASS] == PC_SOLDIER) {
+						other->client->ps.weaponSlotsSoldier[slotId] = weapon;
+					}
+					else {
+						other->client->ps.weaponSlots[slotId] = weapon;
+					}
+				}
+			}
+
+			return qtrue;
+		}
+	}
+
+	return qfalse;
+}
+
+int Pickup_Weapon_New_Inventory( gentity_t *ent, gentity_t *other ) {
+	qboolean isPickedUp = qfalse;
+	qboolean alreadyHave = qfalse;
+	weapon_t weapon = ent->item->giTag;
+	int quantity;
+
+	if ( level.time - other->client->dropWeaponTime < 1000 ) {
+		ent->active = qtrue;
+		return 0;
+	}
+
+	if (ent->count < 0)
+	{
+		quantity = 0; // None for you, sir!
+	}
+	else
+	{
+		if (ent->count)
+		{
+			quantity = ent->count;
+		}
+		else
+		{
+			int maxclip = (other && other->client)
+							  ? BG_GetMaxClip(&other->client->ps, weapon)
+							  : ammoTable[weapon].maxclip;
+
+			quantity = (random() * (maxclip - 4)) + 4; // giving 4 to maxclip
+		}
+
+		if (g_decaychallenge.integer)
+		{
+			quantity = 999;
+		}
+	}
+
+	// check for special colt->akimbo add (if you've got a colt already, add the second now)
+	if ( weapon == WP_COLT ) {
+		if ( COM_BitCheck( other->client->ps.weapons, WP_COLT ) ) {
+			weapon = WP_AKIMBO;
+		}
+	}
+
+	if ( weapon == WP_TT33 ) {
+		if ( COM_BitCheck( other->client->ps.weapons, WP_TT33 ) ) {
+			weapon = WP_DUAL_TT33;
+		}
+	}
+
+	if (weapon == WP_KNIFE)
+	{
+		int maxAmmo = BG_GetMaxAmmo(&other->client->ps, weapon, svParams.ltAmmoBonus);
+
+		if (other->client->ps.ammoclip[weapon] < maxAmmo)
+		{
+			Add_Ammo(other, weapon, 1, qfalse);
+		}
+
+		if (!(ent->spawnflags & 8))
+		{
+			return RESPAWN_SP;
+		}
+
+		return g_weaponRespawn.integer;
+	}
+
+	alreadyHave = COM_BitCheck( other->client->ps.weapons, weapon );
+
+	isPickedUp = Give_Weapon_New_Inventory( other, weapon, qtrue );
+
+	if ( NeedAmmo( other, weapon ) ) {
+		Add_Ammo( other, weapon, quantity, !alreadyHave );
+	} else if ( !isPickedUp ) {
+		ent->active = qtrue;
+		return 0;
+	}
+
+	if ( isPickedUp ) {
+		// now pickup the other one
+		other->client->dropWeaponTime = level.time;
+	}
+
+	if ( !( ent->spawnflags & 8 ) ) {
+		return RESPAWN_SP;
+	}
+
+	return g_weaponRespawn.integer;
+}
 
 int Pickup_Health( gentity_t *ent, gentity_t *other ) {
 	int max;
 	int quantity = 0;
 
-	// small and mega healths will go over the max
-	if ( ent->item->quantity != 5 && ent->item->quantity != 100  ) {
-		max = other->client->ps.stats[STAT_MAX_HEALTH];
-	} else {
+	if ( g_overheal.integer == 1 ) {
+		// modern: any health pickup can overheal up to 200% max health
 		max = other->client->ps.stats[STAT_MAX_HEALTH] * 2;
+	} else {
+		// classic: only small and mega healths go over the max
+		if ( ent->item->quantity != 5 && ent->item->quantity != 100 ) {
+			max = other->client->ps.stats[STAT_MAX_HEALTH];
+		} else {
+			max = other->client->ps.stats[STAT_MAX_HEALTH] * 2;
+		}
 	}
 
 	if ( ent->count ) {
@@ -796,7 +1563,14 @@ void Touch_Item( gentity_t *ent, gentity_t *other, trace_t *trace ) {
 	// call the item-specific pickup function
 	switch ( ent->item->giType ) {
 	case IT_WEAPON:
-		respawn = Pickup_Weapon( ent, other );
+		if (g_newinventory.integer > 0 || g_gametype.integer == GT_SURVIVAL)
+		{
+			respawn = Pickup_Weapon_New_Inventory(ent, other);
+		}
+		else
+		{
+			respawn = Pickup_Weapon(ent, other);
+		}
 		break;
 	case IT_AMMO:
 		respawn = Pickup_Ammo( ent, other );
@@ -815,6 +1589,9 @@ void Touch_Item( gentity_t *ent, gentity_t *other, trace_t *trace ) {
 		break;
 	case IT_HOLDABLE:
 		respawn = Pickup_Holdable( ent, other );
+		break;
+	case IT_PERK:
+		respawn = Pickup_Perk( ent, other );
 		break;
 	case IT_KEY:
 		respawn = Pickup_Key( ent, other );
@@ -965,16 +1742,29 @@ gentity_t *LaunchItem( gitem_t *item, vec3_t origin, vec3_t velocity ) {
 
 	dropped->classname = item->classname;
 	dropped->item = item;
-//	VectorSet (dropped->r.mins, -ITEM_RADIUS, -ITEM_RADIUS, -ITEM_RADIUS);
-//	VectorSet (dropped->r.maxs, ITEM_RADIUS, ITEM_RADIUS, ITEM_RADIUS);
-	VectorSet( dropped->r.mins, -ITEM_RADIUS, -ITEM_RADIUS, 0 );            //----(SA)	so items sit on the ground
-	VectorSet( dropped->r.maxs, ITEM_RADIUS, ITEM_RADIUS, 2 * ITEM_RADIUS );  //----(SA)	so items sit on the ground
+    
+	if (item->giType == IT_POWERUP) {
+		VectorSet( dropped->r.mins, -ITEM_RADIUS, -ITEM_RADIUS, -ITEM_RADIUS );
+		VectorSet( dropped->r.maxs, ITEM_RADIUS, ITEM_RADIUS, ITEM_RADIUS );
+	} else {
+	   VectorSet( dropped->r.mins, -ITEM_RADIUS, -ITEM_RADIUS, 0 );            //----(SA)	so items sit on the ground
+	   VectorSet( dropped->r.maxs, ITEM_RADIUS, ITEM_RADIUS, 2 * ITEM_RADIUS );  //----(SA)	so items sit on the ground
+	}
 	dropped->r.contents = CONTENTS_TRIGGER | CONTENTS_ITEM;
 
 	dropped->touch = Touch_Item_Auto;
 
 	G_SetOrigin( dropped, origin );
-	dropped->s.pos.trType = TR_GRAVITY;
+
+	if (item->giType == IT_POWERUP)
+	{
+		dropped->s.pos.trType = TR_GRAVITY_PAUSED;
+	}
+	else
+	{
+		dropped->s.pos.trType = TR_GRAVITY;
+	}
+
 	dropped->s.pos.trTime = level.time;
 	VectorCopy( velocity, dropped->s.pos.trDelta );
 
@@ -984,9 +1774,18 @@ gentity_t *LaunchItem( gitem_t *item, vec3_t origin, vec3_t velocity ) {
 	dropped->physicsFlush = qtrue;
 
 	// (SA) TODO: FIXME: don't do this right now.  bug needs to be found.
-//	if(item->giType == IT_WEAPON)
-//		dropped->s.eFlags |= EF_SPINNING;	// spin the weapon as it flies from the dead player.  it will stop when it hits the ground
+	if (item->giType == IT_POWERUP)
+	{
+		dropped->s.eFlags |= EF_SPINNING; // spin the weapon as it flies from the dead player.  it will stop when it hits the ground
+		// Add dynamic light to the dropped powerup
+		//dropped->s.constantLight = 50;	
+		//dropped->s.constantLight |= (255 << 8);	 
+		//dropped->s.constantLight |= (255 << 16); 
+		//dropped->s.constantLight |= (255 << 24);	
 
+		// Play a sound at the location of the dropped item
+		dropped->s.loopSound = G_SoundIndex("sound/misc/powerup_ambience.wav");
+	}
 
 	if ( item->giType == IT_TEAM ) { // Special case for CTF flags
 		dropped->think = Team_DroppedFlagThink;
@@ -1088,7 +1887,7 @@ void FinishSpawningItem( gentity_t *ent ) {
     return;
 	}
 
-	if ( g_regen.integer && ent->item->giType == IT_HEALTH )
+	if ( g_regen.integer == 1 && ent->item->giType == IT_HEALTH )
 	{
     return;
 	}
@@ -1117,9 +1916,36 @@ void FinishSpawningItem( gentity_t *ent ) {
 	{
     return;
 	}
-
+       
     // No new ammo types too
-	if ( g_fullarsenal.integer == 0 && ent->item->giType == IT_AMMO && (ent->item->giAmmoIndex == WP_MP44 || ent->item->giAmmoIndex == WP_M97 || ent->item->giAmmoIndex == WP_BAR)) 
+	if ( g_fullarsenal.integer == 0 && ent->item->giType == IT_AMMO && (
+		ent->item->giAmmoIndex == WP_MP44 || 
+		ent->item->giAmmoIndex == WP_M97 || 
+		ent->item->giAmmoIndex == WP_BAR || 
+		ent->item->giAmmoIndex == WP_REVOLVER)) 
+	{
+	return;
+	} 
+
+    // Classic Tides of War arsenal
+	if ( g_fullarsenal.integer == 2 && (   ent->item->giWeapon == WP_MP34 
+	                                || ent->item->giWeapon == WP_REVOLVER 
+									|| ent->item->giWeapon == WP_G43 
+									|| ent->item->giWeapon == WP_M1GARAND 
+									|| ent->item->giWeapon == WP_BAR 
+									|| ent->item->giWeapon == WP_MG42M
+									|| ent->item->giWeapon == WP_MP44
+									|| ent->item->giWeapon == WP_M7
+									|| ent->item->giWeapon == WP_BROWNING ) )
+	{
+    return;
+	}
+
+    // No new ammo types too Classic Tides of War
+	if ( g_fullarsenal.integer == 2 && ent->item->giType == IT_AMMO && (
+		ent->item->giAmmoIndex == WP_MP44 || 
+		ent->item->giAmmoIndex == WP_BAR || 
+		ent->item->giAmmoIndex == WP_REVOLVER)) 
 	{
 	return;
 	} 
@@ -1145,7 +1971,7 @@ void FinishSpawningItem( gentity_t *ent ) {
 
 		ent->touch = Touch_Item;    // no auto-pickup, only activate
 	} else if ( ent->item->giType == IT_HOLDABLE )      {
-		if ( ent->item->giTag >= HI_BOOK1 && ent->item->giTag <= HI_BOOK3 ) {
+		if ( ent->item->giTag >= HI_BOOK1 && ent->item->giTag <= HI_BOOK4 ) {
 			G_FindConfigstringIndex( va( "hbook%d", ent->item->giTag - HI_BOOK1 ), CS_CLIPBOARDS, MAX_CLIPBOARD_CONFIGSTRINGS, qtrue );
 		}
 //		ent->touch = Touch_Item;	// no auto-pickup, only activate
@@ -1440,9 +2266,9 @@ G_BounceItem
 ================
 */
 void G_BounceItem( gentity_t *ent, trace_t *trace ) {
-	vec3_t velocity;
-	float dot;
-	int hitTime;
+	vec3_t   velocity;
+	float	dot;
+	int      hitTime;
 
 	hitTime = level.previousTime + ( level.time - level.previousTime ) * trace->fraction;
 
@@ -1454,12 +2280,12 @@ void G_BounceItem( gentity_t *ent, trace_t *trace ) {
 
 	// bounce or just slide? - check if stuck or surface not too step
 	if ( trace->plane.normal[2] >= 0.7 || VectorLength( ent->s.pos.trDelta ) < 16 || !ent->physicsSlide ) {
-	// cut the velocity to keep from bouncing forever
+		// cut the velocity to keep from bouncing forever
 		
 		if (trace->contents & (CONTENTS_BODY)) {
 		VectorScale( ent->s.pos.trDelta, ent->physicsBounce * 0.1, ent->s.pos.trDelta );
 		} else {
-	VectorScale( ent->s.pos.trDelta, ent->physicsBounce, ent->s.pos.trDelta );
+		VectorScale( ent->s.pos.trDelta, ent->physicsBounce, ent->s.pos.trDelta );
 		}
 
 		// do a bounce
@@ -1469,12 +2295,12 @@ void G_BounceItem( gentity_t *ent, trace_t *trace ) {
 			ent->s.weapon = ent->item->giTag;
 		}
 
-	// check for stop
+		// check for stop
 		if ( G_ItemStick( ent, trace, velocity ) || ( VectorLength(ent->s.pos.trDelta) < 40 && trace->plane.normal[2] > 0)  )
 		{
 			G_FlushItem( ent, trace );
-		return;
-	}
+			return;
+		}
 
 		// bounce the angles
 		if ( ent->s.apos.trType != TR_STATIONARY )
@@ -1656,4 +2482,33 @@ void G_RunItem( gentity_t *ent ) {
 
 	G_BounceItem( ent, &tr );
 }
+
+/*
+=================
+G_DropSpecifiedItem
+
+Drops any item specified by gitem_t*.
+- lifetimeMs: 0 means "forever" (like SP weapon drops).
+- dropChance: the probability of dropping items (0 to 100).
+=================
+*/
+gentity_t *G_DropSpecifiedItem( gentity_t *ent, gitem_t *item, int lifetimeMs, int dropChance ) {
+	gentity_t *drop;
+
+	if ( !ent || !ent->client || !item || rand() % 100 >= dropChance ) {
+		return NULL;
+	}
+
+	drop = Drop_Item( ent, item, 0, qfalse );
+	if ( drop ) {
+		if ( lifetimeMs > 0 ) {
+			drop->nextthink = level.time + lifetimeMs;
+		} else {
+			drop->nextthink = 0;
+		}
+	}
+
+	return drop;
+}
+
 

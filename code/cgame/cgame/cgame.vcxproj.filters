@@ -63,13 +63,13 @@
     <ClCompile Include="..\cg_playerstate.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\cg_polybus.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="..\cg_predict.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\cg_scoreboard.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\cg_speakerscript.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\cg_servercmds.c">

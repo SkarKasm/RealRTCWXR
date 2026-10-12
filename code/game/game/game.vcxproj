@@ -259,6 +259,12 @@
     <ClCompile Include="..\g_mover.c" />
     <ClCompile Include="..\g_props.c" />
     <ClCompile Include="..\g_save.c" />
+    <ClCompile Include="..\ai_cast_func_hein.c" />
+    <ClCompile Include="..\ai_cast_loadouts.c" />
+    <ClCompile Include="..\ai_cast_survival.c" />
+    <ClCompile Include="..\g_survival_buy.c" />
+    <ClCompile Include="..\g_survival_misc.c" />
+    <ClCompile Include="..\g_survival_score.c" />
     <ClCompile Include="..\g_script.c" />
     <ClCompile Include="..\g_script_actions.c" />
     <ClCompile Include="..\g_session.c" />

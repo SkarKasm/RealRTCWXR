@@ -471,7 +471,7 @@ void AICast_Think( int client, float thinktime ) {
 	// turn off flags that are set each frame if needed
 	ent->client->ps.eFlags &= ~( EF_NOSWINGANGLES | EF_MONSTER_EFFECT | EF_MONSTER_EFFECT2 | EF_MONSTER_EFFECT3 );
 	// conditional flags
-	if ( ent->aiCharacter == AICHAR_ZOMBIE ) {
+	if ( ent->aiCharacter == AICHAR_ZOMBIE || ent->aiCharacter == AICHAR_ZOMBIE_SURV || ent->aiCharacter == AICHAR_ZOMBIE_GHOST || ent->aiCharacter == AICHAR_ZOMBIE_FLAME ) {
 		if ( COM_BitCheck( ent->client->ps.weapons, WP_MONSTER_ATTACK1 ) ) {
 			cs->aiFlags |= AIFL_NO_FLAME_DAMAGE;
 			SET_FLAMING_ZOMBIE( ent->s, 1 );
@@ -506,6 +506,14 @@ void AICast_Think( int client, float thinktime ) {
 			cs->revivingTime = 0;
 		}
 		//
+
+        if ( g_gametype.integer == GT_SURVIVAL && !ent->oneshot )  { // Survival Respawn
+		if ( cs->rebirthTime && cs->rebirthTime < level.time ) {
+           AICast_SurvivalRespawn(ent, cs);
+		}
+
+		} else { // Normal Respawn
+
 		if ( cs->rebirthTime && cs->rebirthTime < level.time ) {
 			vec3_t mins, maxs;
 			int touch[10], numTouch;
@@ -602,6 +610,8 @@ void AICast_Think( int client, float thinktime ) {
 			}
 			trap_LinkEntity( ent );
 		}
+		}
+
 		// ZOMBIE should set effect flag if really dead
 		if ( cs->aiCharacter == AICHAR_ZOMBIE && !ent->r.contents ) {
 			ent->client->ps.eFlags |= EF_MONSTER_EFFECT2;
@@ -633,6 +643,59 @@ void AICast_Think( int client, float thinktime ) {
 		// no more thinking required
 		return;
 	}
+
+    // EMP: temporarily disable certain NPCS
+    if ( ent->empDisabledUntil > level.time ) {
+
+        if ( ent->aiCharacter == AICHAR_LOPER || ent->aiCharacter == AICHAR_PROTOSOLDIER || ent->aiCharacter == AICHAR_XSHEPHERD || ent->aiCharacter == AICHAR_SUPERSOLDIER || ent->aiCharacter == AICHAR_SUPERSOLDIER_LAB  ) {
+
+			// Stop any movement immediately
+			ent->client->ps.pm_time = 0;
+			ent->client->ps.pm_flags &= ~PMF_TIME_KNOCKBACK;
+			VectorClear( ent->client->ps.velocity );
+
+            // Prevent attacking / weapon usage
+            ent->client->ps.weaponTime = 200;              // keep them from firing
+			
+            // Cancel “I am attacking” style state bits that can force actions
+            cs->aiFlags &= ~( AIFL_ATTACK_CROUCH | AIFL_SPECIAL_FUNC | AIFL_VIEWLOCKED );
+            cs->actionFlags = 0;
+            cs->attackcrouch_time = 0;
+            cs->lastWeaponFired = 0;
+
+            // Drop enemy so they don't immediately resume a melee/charge the same frame it ends
+            cs->enemyNum = -1;
+
+            cs->pauseTime = level.time + 250;
+
+			if (ent->aiCharacter == AICHAR_PROTOSOLDIER || ent->aiCharacter == AICHAR_SUPERSOLDIER || ent->aiCharacter == AICHAR_SUPERSOLDIER_LAB )
+			{
+				// Once the "power_down" anim is done (or mostly done), go into idle-down pose
+				if (ent->empAnimState == 1 && ent->client->ps.legsTimer <= 100)
+				{
+					BG_PlayAnimName(&ent->client->ps, "powered_down", ANIM_BP_LEGS, qtrue, qfalse, qtrue);
+					BG_PlayAnimName(&ent->client->ps, "powered_down", ANIM_BP_TORSO, qtrue, qfalse, qtrue);
+
+					// "powered_down" is 1 frame -> effectively a pose; keep it alive
+					ent->client->ps.legsTimer = 999999;
+					ent->client->ps.torsoTimer = 999999;
+
+					ent->empAnimState = 2;
+				}
+
+				// Keep pose timers from expiring if something trims them
+				if (ent->empAnimState == 2)
+				{
+					if (ent->client->ps.legsTimer < 200)
+						ent->client->ps.legsTimer = 200;
+					if (ent->client->ps.torsoTimer < 200)
+						ent->client->ps.torsoTimer = 200;
+				}
+			}
+
+			return;
+        }
+    }
 	//
 	// set some anim conditions
 	if ( cs->secondDeadTime ) {
@@ -1678,6 +1741,10 @@ void AICast_QueryThink( cast_state_t *cs ) {
 
 	ent = &g_entities[cs->entityNum];
 	ocs = AICast_GetCastState( cs->enemyNum );
+	if ( ocs == NULL )
+	{
+		return;
+	}
 
 	// never crouch while in this state (by choice anyway)
 	cs->attackcrouch_time = 0;

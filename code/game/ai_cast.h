@@ -270,6 +270,7 @@ typedef struct
 {
 	char    *actionString;
 	qboolean ( *actionFunc )( struct cast_state_s *cs, char *params );
+	const void *userdata;
 } cast_script_stack_action_t;
 //
 typedef struct
@@ -320,8 +321,10 @@ typedef struct
 	int scriptNoSightTime;
 	int scriptAttackEnt;            // we should always attack this AI if they are alive
 	vec3_t playanim_viewangles;
+	const cast_script_stack_action_t *currentAction;
+	qboolean scriptGotoIsGroup;
 } cast_script_status_t;
-//
+
 typedef struct
 {
 	aistateEnum_t currentState;
@@ -586,6 +589,17 @@ typedef struct cast_state_s
 	qboolean died;            // for g_airespawn
 	qboolean norespawn;
 	int respawnsleft;
+
+	qboolean registeredSurvivalKill;
+
+	qboolean defendActive;
+	qboolean defendReturning; 
+	vec3_t defendOrigin;
+	float defendRadius;	 
+	float defendLeash;	
+	int defendExpireTime; 
+	int defendRepathTime;
+
 } cast_state_t;
 //
 #define CSFOFS( x ) ( (size_t)&( ( (cast_state_t *)0 )->x ) )
@@ -729,6 +743,7 @@ void AICast_AudibleEvent( int srcnum, vec3_t pos, float range );
 qboolean AICast_WeaponUsable( cast_state_t *cs, int weaponNum );
 float AICast_WeaponRange( cast_state_t *cs, int weaponnum );
 
+qboolean AICast_Defend_Update( cast_state_t *cs );
 //
 // ai_cast_events.c
 void    AICast_Pain( gentity_t *targ, gentity_t *attacker, int damage, vec3_t point );
@@ -736,6 +751,19 @@ void    AICast_Die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, 
 void    AICast_Sight( gentity_t *ent, gentity_t *other, int lastSight );
 void    AICast_EndChase( cast_state_t *cs );
 void    AICast_ProcessActivate( int entNum, int activatorNum );
+
+//
+// ai_cast_survival.c
+void AICast_Die_Survival( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int meansOfDeath );
+void AICast_SetRebirthTimeSurvival(gentity_t *ent, cast_state_t *cs);
+void AICast_RegisterSurvivalKill(gentity_t *self, gentity_t *attacker, int meansOfDeath);
+void AICast_InitSurvival(void);
+void AICast_SurvivalRespawn (gentity_t *ent, cast_state_t * cs ) ;
+void AICast_CheckSurvivalProgression( gentity_t *attacker );
+void AIChar_AIScript_AlertEntity_Survival(gentity_t *ent);
+void AICast_CreateCharacter_Survival(gentity_t *newent, cast_state_t *cs);
+void AICast_UpdateMaxActiveAI( void );
+void AICast_ApplySurvivalAttributes(gentity_t *ent, cast_state_t *cs);
 //
 // ai_cast_think.c
 void AICast_Think( int client, float thinktime );
@@ -765,3 +793,13 @@ void    GibEntity( gentity_t *self, int killer );
 void    GibHead( gentity_t *self, int killer );
 //
 extern bot_state_t  *botstates[MAX_CLIENTS];
+
+typedef struct
+{
+	const char *steamId;
+	qboolean (*canAward)(cast_state_t *cs); // NULL = no extra conditions
+} cast_achievementDef_t;
+//
+
+qboolean AICast_Loadouts_ApplyToEnt( cast_state_t *cs, gentity_t *target, const char *loadoutName );
+

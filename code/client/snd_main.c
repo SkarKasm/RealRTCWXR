@@ -36,6 +36,11 @@ cvar_t *s_muteWhenUnfocused;
 
 static soundInterface_t si;
 
+static char s_bgIntro[MAX_QPATH];
+static char s_bgLoop[MAX_QPATH];
+
+static qboolean s_cinematicMute = qfalse;
+
 /*
 =================
 S_ValidateInterface
@@ -46,6 +51,7 @@ static qboolean S_ValidSoundInterface( soundInterface_t *si )
 	if( !si->Shutdown ) return qfalse;
 	if( !si->StartSound ) return qfalse;
 	if( !si->StartSoundEx ) return qfalse;
+	if( !si->StartSoundVControl ) return qfalse;
 	if( !si->StartLocalSound ) return qfalse;
 	if( !si->StartBackgroundTrack ) return qfalse;
 	if( !si->StopBackgroundTrack ) return qfalse;
@@ -88,6 +94,12 @@ S_StartSound
 */
 void S_StartSound( vec3_t origin, int entnum, int entchannel, sfxHandle_t sfx )
 {
+
+	if (s_cinematicMute)
+	{
+		return;
+	}
+
 	if( si.StartSound ) {
 		si.StartSound( origin, entnum, entchannel, sfx );
 	}
@@ -102,6 +114,18 @@ void S_StartSoundEx( vec3_t origin, int entnum, int entchannel, sfxHandle_t sfx,
 {
 	if( si.StartSoundEx ) {
 		si.StartSoundEx( origin, entnum, entchannel, sfx, flags );
+	}
+}
+
+/*
+=================
+S_StartSoundVControl
+=================
+*/
+void S_StartSoundVControl( vec3_t origin, int entnum, int entchannel, sfxHandle_t sfx, int volume )
+{
+	if( si.StartSoundVControl ) {
+		si.StartSoundVControl( origin, entnum, entchannel, sfx, volume );
 	}
 }
 
@@ -124,9 +148,20 @@ S_StartBackgroundTrack
 */
 void S_StartBackgroundTrack( const char *intro, const char *loop )
 {
+
+	Q_strncpyz(s_bgIntro, intro ? intro : "", sizeof(s_bgIntro));
+	Q_strncpyz(s_bgLoop, loop ? loop : "", sizeof(s_bgLoop));
+
 	if( si.StartBackgroundTrack ) {
 		si.StartBackgroundTrack( intro, loop );
 	}
+}
+
+
+void S_RestartBackgroundTrack( void ) {
+    if ( s_bgIntro[0] || s_bgLoop[0] ) {
+        S_StartBackgroundTrack( s_bgIntro, s_bgLoop );
+    }
 }
 
 /*
@@ -172,6 +207,11 @@ S_StartStreamingSound
 */
 void S_StartStreamingSound( const char *intro, const char *loop, int entityNum, int channel, int attenuation )
 {
+	if (s_cinematicMute)
+	{
+		return;
+	}
+
 	if( si.StartStreamingSound ) {
 		si.StartStreamingSound( intro, loop, entityNum, channel, attenuation );
 	}
@@ -246,6 +286,13 @@ S_AddLoopingSound
 void S_AddLoopingSound( int entityNum, const vec3_t origin,
 		const vec3_t velocity, const int range, sfxHandle_t sfx, int volume )
 {
+	
+	if (s_cinematicMute)
+	{
+		return;
+	}
+
+
 	if( si.AddLoopingSound ) {
 		si.AddLoopingSound( entityNum, origin, velocity, range, sfx, volume );
 	}
@@ -259,6 +306,12 @@ S_AddRealLoopingSound
 void S_AddRealLoopingSound( int entityNum, const vec3_t origin,
 		const vec3_t velocity, const int range, sfxHandle_t sfx )
 {
+
+	if (s_cinematicMute)
+	{
+		return;
+	}
+
 	if( si.AddRealLoopingSound ) {
 		si.AddRealLoopingSound( entityNum, origin, velocity, range, sfx );
 	}
@@ -538,6 +591,16 @@ void S_StopMusic_f( void )
 		return;
 
 	si.StopBackgroundTrack();
+}
+
+
+void S_SetCinematicMute( qboolean mute ) {
+    s_cinematicMute = mute;
+
+    if ( mute ) {
+        S_StopBackgroundTrack(); // must stop/close the music stream
+        S_StopAllSounds();       // kills currently playing channels
+    }
 }
 
 

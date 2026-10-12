@@ -45,6 +45,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "../botlib/botai.h"          //bot ai interface
 
 #include "ai_cast.h"
+#include "g_survival.h"
 
 #include "../steam/steam.h"
 
@@ -121,6 +122,15 @@ void AICast_Pain( gentity_t *targ, gentity_t *attacker, int damage, vec3_t point
 		return;
 	}
 
+	if (g_gametype.integer == GT_SURVIVAL)
+	{
+		// prevent scoring for fire damage
+		if (targ->lastPainMOD != MOD_FLAMETHROWER && targ->lastPainMOD != MOD_FLAMETRAP)
+		{
+			Survival_AddPainScore(attacker, targ, damage);
+		}
+	}
+
 	// process the event (turn to face the attacking direction? go into hide/retreat state?)
 	// need to weigh up the situation, but foremost, an inactive AI cast should always react in some way to being hurt
 	cs->lastPain = level.time;
@@ -158,6 +168,12 @@ AICast_Die
 ============
 */
 void AICast_Die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int meansOfDeath ) {
+
+	if (g_gametype.integer == GT_SURVIVAL && !self->oneshot) {
+		AICast_Die_Survival(self, inflictor, attacker, damage, meansOfDeath);
+		return;
+	}
+
 	int contents;
 	int killer = 0;
 	cast_state_t    *cs;
@@ -165,13 +181,11 @@ void AICast_Die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 	char mapname[MAX_QPATH];
 	qboolean respawn = qfalse;
 
-	qboolean modDagger = (meansOfDeath == MOD_DAGGER );
-	qboolean modStealthDagger = (meansOfDeath == MOD_DAGGER_STEALTH );
-
 	// Achievements related stuff! 
 	qboolean modPanzerfaust = (meansOfDeath == MOD_ROCKET || meansOfDeath == MOD_ROCKET_SPLASH);
 	qboolean modKicked = (meansOfDeath == MOD_KICKED);
 	qboolean modKnife = (meansOfDeath == MOD_KNIFE);
+	qboolean modKnifeStealth = (meansOfDeath == MOD_KNIFE_STEALTH);
 	qboolean modCrush = (meansOfDeath == MOD_CRUSH);
 	qboolean modFalling = (meansOfDeath == MOD_FALLING);
 	qboolean killerPlayer	 = attacker && attacker->client && !( attacker->aiCharacter );
@@ -258,32 +272,18 @@ void AICast_Die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 		}
 	}
 
+	  if (killerPlayer && attacker->client->ps.powerups[PW_VAMPIRE]) {
 
-	if (self->aiCharacter && !(self->aiCharacter == AICHAR_WARZOMBIE) && !(self->aiCharacter == AICHAR_ZOMBIE) && killerPlayer && modDagger ) // vampirism
-	{
-	
-			trap_SendServerCommand( -1, "mu_play sound/player/vampirism.wav 0\n" );
+			trap_SendServerCommand( -1, "mu_play sound/Zombie/firstsight/firstsight3.wav 0\n" );
 			G_AddEvent( self, EV_GIB_VAMPIRISM, killer );
 		    attacker->health += 25;
-
-			
-			if ( attacker->health > attacker->client->ps.stats[STAT_MAX_HEALTH] ) 
-			{
-			attacker->health = attacker->client->ps.stats[STAT_MAX_HEALTH];
-		    }
-	}
-
-	if (self->aiCharacter && !(self->aiCharacter == AICHAR_WARZOMBIE) && !(self->aiCharacter == AICHAR_ZOMBIE) && killerPlayer && modStealthDagger ) // vampirism
-	{
-			trap_SendServerCommand( -1, "mu_play sound/player/vampirism.wav 0\n" );
-			G_AddEvent( self, EV_GIB_VAMPIRISM, killer );
-		    attacker->health += 50;
 		
-			if ( attacker->health > attacker->client->ps.stats[STAT_MAX_HEALTH] ) 
+			if ( attacker->health > 300 ) 
 			{
-			attacker->health = attacker->client->ps.stats[STAT_MAX_HEALTH];
+			attacker->health = 300;
 		    }
-	}
+
+	  }
 
 	// print debugging message
 	if ( aicast_debug.integer == 2 && attacker->s.number == 0 ) {
@@ -316,23 +316,14 @@ void AICast_Die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 			self->health += damage; // don't drop below gib_health if we weren't already below it
 			return;
 		}
-/*
-		if (!cs->rebirthTime)
-		{
-			self->health = -999;
-			damage = 999;
-		} else if ( self->health >= GIB_HEALTH ) {
-			// while waiting for rebirth, we only "die" if we drop below gib health
-			return;
-		}
-*/
+
 		// always gib
 		self->health = -999;
 		damage = 999;
 	}
 
 	// Zombies are very fragile against highly explosives
-	if ( self->aiCharacter == AICHAR_ZOMBIE && damage > 20 && inflictor != attacker ) {
+	if ( (self->aiCharacter == AICHAR_ZOMBIE || self->aiCharacter == AICHAR_ZOMBIE_SURV || self->aiCharacter == AICHAR_ZOMBIE_GHOST || self->aiCharacter == AICHAR_ZOMBIE_FLAME ) && damage > 20 && inflictor != attacker ) {
 		self->health = -999;
 		damage = 999;
 	}
@@ -370,7 +361,7 @@ void AICast_Die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 		// if client is in a nodrop area, don't drop anything
 		contents = trap_PointContents( self->r.currentOrigin, -1 );
 		if ( !( contents & CONTENTS_NODROP ) ) {
-			TossClientItems( self );
+			TossClientWeapons( self );
 		}
 
 		// make sure the client doesn't forget about this entity until it's set to "dead" frame
@@ -450,9 +441,6 @@ void AICast_Die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 			self->client->ps.eFlags |= EF_DEAD;
 			self->s.eFlags |= EF_DEAD;
 
-			// make sure we dont move around while on the ground
-			//self->flags |= FL_NO_HEADCHECK;
-
 		}
 
 		//RealRTCW modified with bodysink integer
@@ -502,8 +490,8 @@ void AICast_Die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 		respawn = qtrue;
 	}
 
-	if ( respawn && self->aiCharacter != AICHAR_ZOMBIE && self->aiCharacter != AICHAR_HELGA
-		 && self->aiCharacter != AICHAR_HEINRICH && nogib && !cs->norespawn ) {
+	if ( ( respawn && self->aiCharacter != AICHAR_ZOMBIE && self->aiCharacter != AICHAR_HELGA
+		 && self->aiCharacter != AICHAR_HEINRICH && nogib && !cs->norespawn ) ) {
 
 		if ( cs->respawnsleft != 0 ) {
 
@@ -511,7 +499,7 @@ void AICast_Die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 				cs->respawnsleft--;
 			}
 
-			if ( g_gameskill.integer == GSKILL_EASY ) {
+            if ( g_gameskill.integer == GSKILL_EASY ) {
 				cs->rebirthTime = level.time + 25000 + rand() % 2000;
 			} else if ( g_gameskill.integer == GSKILL_MEDIUM ) {
 				cs->rebirthTime = level.time + 20000 + rand() % 2000;
@@ -525,43 +513,66 @@ void AICast_Die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 		}
 	}
 
-	trap_LinkEntity( self );
+	trap_LinkEntity(self);
 
 	// kill, instanly, any streaming sound the character had going
-	G_AddEvent( &g_entities[self->s.number], EV_STOPSTREAMINGSOUND, 0 );
+	G_AddEvent(&g_entities[self->s.number], EV_STOPSTREAMINGSOUND, 0);
 
 	// mark the time of death
 	cs->deathTime = level.time;
 
 	// dying ai's can trigger a target
-	if ( !cs->rebirthTime ) {
-		G_UseTargets( self, self );
+	if (!cs->rebirthTime)
+	{
+		G_UseTargets(self, self);
 		// really dead now, so call the script
-		if ( attacker ) {
-			AICast_ScriptEvent( cs, "death", attacker->aiName ? attacker->aiName : "" );
-		} else {
-			AICast_ScriptEvent( cs, "death", "" );
+		if (attacker)
+		{
+			if (modKnifeStealth)
+			{
+				AICast_ScriptEvent(cs, "stealthkill", attacker->aiName ? attacker->aiName : "");
+			}
+			AICast_ScriptEvent(cs, "death", attacker->aiName ? attacker->aiName : "");
+		}
+		else
+		{
+			if (modKnifeStealth)
+			{
+				AICast_ScriptEvent(cs, "stealthkill", "");
+			}
+			AICast_ScriptEvent(cs, "death", "");
 		}
 		// call the deathfunc for this cast, so we can play associated sounds, or do any character-specific things
-		if ( !( cs->aiFlags & AIFL_DENYACTION ) && cs->deathfunc ) {
-			cs->deathfunc( self, attacker, damage, meansOfDeath );   //----(SA)	added mod
+		if (!(cs->aiFlags & AIFL_DENYACTION) && cs->deathfunc)
+		{
+			cs->deathfunc(self, attacker, damage, meansOfDeath); //----(SA)	added mod
 		}
-	} else {
+	}
+	else
+	{
 		// really dead now, so call the script
-		if ( respawn && self->aiCharacter != AICHAR_ZOMBIE && self->aiCharacter != AICHAR_HELGA
-			 && self->aiCharacter != AICHAR_HEINRICH && nogib && !cs->norespawn ) {
+		if (respawn && self->aiCharacter != AICHAR_ZOMBIE && self->aiCharacter != AICHAR_HELGA && self->aiCharacter != AICHAR_HEINRICH && nogib && !cs->norespawn)
+		{
 
-			if ( !cs->died ) {
-				G_UseTargets( self, self );                 // testing
-				AICast_ScriptEvent( cs, "death", "" );
+			if (!cs->died)
+			{
+				G_UseTargets(self, self); // testing
+				if (modKnifeStealth)
+				{
+					AICast_ScriptEvent(cs, "stealthkill", "");
+				}
+				AICast_ScriptEvent(cs, "death", "");
 				cs->died = qtrue;
 			}
-		} else {
-			AICast_ScriptEvent( cs, "fakedeath", "" );
+		}
+		else
+		{
+			AICast_ScriptEvent(cs, "fakedeath", "");
 		}
 		// call the deathfunc for this cast, so we can play associated sounds, or do any character-specific things
-		if ( !( cs->aiFlags & AIFL_DENYACTION ) && cs->deathfunc ) {
-			cs->deathfunc( self, attacker, damage, meansOfDeath );   //----(SA)	added mod
+		if (!(cs->aiFlags & AIFL_DENYACTION) && cs->deathfunc)
+		{
+			cs->deathfunc(self, attacker, damage, meansOfDeath); //----(SA)	added mod
 		}
 	}
 }
@@ -750,4 +761,27 @@ void AICast_RecordScriptSound( int client ) {
 
 	cs = AICast_GetCastState( client );
 	cs->lastScriptSound = level.time;
+}
+
+gentity_t* G_FindMissile( gentity_t* start, weapon_t weap ) {
+	int i = start ? ( start - g_entities ) + 1 : 0;
+	gentity_t* ent = &g_entities[i];
+
+	for ( ; i < level.num_entities; i++, ent++ ) {
+		if ( ent->s.eType != ET_MISSILE ) {
+			continue;
+		}
+
+		if ( ent->s.weapon != weap ) {
+			continue;
+		}
+
+		return ent;
+	}
+
+	return NULL;
+}
+
+gentity_t* G_FindSmokeBomb( gentity_t* start ) {
+	return G_FindMissile( start, WP_SMOKE_BOMB );
 }

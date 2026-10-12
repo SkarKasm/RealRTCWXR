@@ -162,7 +162,8 @@ typedef enum {
 #define CS_FOGVARS          29      //----(SA)	(hoping 29-31 are available) used for saving the current state/settings of the fog
 #define CS_SKYBOXORG        30      // this is where we should view the skybox from
 #define CS_TARGETEFFECT     31  //----(SA)
-#define CS_MODELS           32
+#define CS_TIMEDILATION     32      // world time dilation factor (weapon wheel slow-mo), SP only
+#define CS_MODELS           33
 #define CS_SOUNDS           ( CS_MODELS + MAX_MODELS )
 #define CS_PLAYERS          ( CS_SOUNDS + MAX_SOUNDS )
 #define CS_LOCATIONS        ( CS_PLAYERS + MAX_CLIENTS )
@@ -203,7 +204,8 @@ typedef enum {
 	GSKILL_MEDIUM,
 	GSKILL_HARD,
 	GSKILL_MAX,
-	GSKILL_REALISM,     // RealRTCW. Must always be last.
+	GSKILL_REALISM,
+	GSKILL_SURVIVAL,     // RealRTCW. Must always be last.
 	GSKILL_NUM_SKILLS
 } gameskill_t;
 
@@ -314,6 +316,12 @@ typedef struct {
 	int pmove_msec;
 
 	int ltChargeTime;
+	int soldierChargeTime;
+	int engineerChargeTime;
+	int medicChargeTime;
+	int cvopsChargeTime;
+
+	int gametype;
 
 	// callbacks to test the world
 	// these will be different functions during game and cgame
@@ -326,11 +334,12 @@ void PM_UpdateViewAngles( playerState_t * ps, usercmd_t * cmd, void( trace ) ( t
 int Pmove( pmove_t *pmove );
 
 //===================================================================================
-
-#define PC_SOLDIER              0   
-#define PC_MEDIC                1   
-#define PC_ENGINEER             2   
-#define PC_LT                   3   
+#define PC_NONE                 0
+#define PC_SOLDIER              1   
+#define PC_MEDIC                2   
+#define PC_ENGINEER             3   
+#define PC_LT                   4
+#define PC_CVOPS                5   
 #define PC_MEDIC_CHARGETIME     30000 
 
 
@@ -343,7 +352,8 @@ typedef enum {
 	STAT_DEAD_YAW,                  // look this direction when dead (FIXME: get rid of?)
 	STAT_CLIENTS_READY,             // bit mask of clients wishing to exit the intermission (FIXME: configstring?)
 	STAT_MAX_HEALTH,                // health / armor limit, changable by handicap
-	STAT_PLAYER_CLASS               // DHM - Nerve :: player class in multiplayer
+	STAT_PLAYER_CLASS,               // DHM - Nerve :: player class in multiplayer
+	STAT_PERK
 } statIndex_t;
 
 
@@ -367,8 +377,9 @@ typedef enum {
 	PERS_ACCURACY_SHOTS,
 	PERS_ACCURACY_HITS,
 	PERS_HWEAPON_USE, // Rafael - mg42
-	PERS_WOLFKICK // Rafael wolfkick
-
+	PERS_WOLFKICK, // Rafael wolfkick
+	PERS_KILLS,
+	PERS_WAVES
 } persEnum_t;
 
 // entityState_t->eFlags
@@ -419,7 +430,9 @@ typedef enum {
 	PW_NONE,
 	PW_QUAD,
 	PW_BATTLESUIT,
+	PW_BATTLESUIT_SURV,
 	PW_HASTE,
+	PW_HASTE_SURV,
 	PW_INVIS,
 	PW_REGEN,
 	PW_FLIGHT,
@@ -427,7 +440,9 @@ typedef enum {
 	PW_NOFATIGUE,
 	PW_REDFLAG,
 	PW_BLUEFLAG,
-	PW_BALL,
+	PW_VAMPIRE,
+	PW_AMMO,
+	PW_XSHIELD,
 	PW_NUM_POWERUPS
 } powerup_t;
 
@@ -443,20 +458,39 @@ typedef enum {
 
 typedef enum {
 	HI_NONE,
+	// draw in HUD
 	HI_WINE,
 	HI_ADRENALINE,
 	HI_BANDAGES,
 	HI_BOOK1,   
 	HI_BOOK2,   
-	HI_BOOK3,   
+	HI_BOOK3,
+	HI_BOOK4,   
 	HI_EG_SYRINGE,
 	HI_BG_SYRINGE,
 	HI_LP_SYRINGE,
+	HI_CROSS,
+	HI_EMP,
+	HI_XSHIELD,
+	// boundary marker
+	HI_HUD_VISIBLE_END,
+	// for special logic
 	HI_KNIVES,
 	HI_M97,
 	HI_AUTO5,
 	HI_NUM_HOLDABLE
 } holdable_t;
+
+typedef enum {
+	PERK_NONE,
+	PERK_RESILIENCE,
+	PERK_SCAVENGER,
+	PERK_RUNNER,
+	PERK_WEAPONHANDLING,
+	PERK_RIFLING,
+	PERK_SECONDCHANCE,
+	NUM_PERKS
+} perk_t;
 
 typedef enum
 {
@@ -480,6 +514,13 @@ typedef enum
 	AICHAR_PRIEST,
 	AICHAR_XSHEPHERD,
 	AICHAR_SUPERSOLDIER_LAB,
+	AICHAR_ZOMBIE_SURV,
+	AICHAR_ZOMBIE_GHOST,
+	AICHAR_ZOMBIE_FLAME,
+	AICHAR_LOPER_SPECIAL,
+	AICHAR_MERCENARY,
+	AICHAR_TRENCH,
+	AICHAR_FLESH,
 	NUM_CHARACTERS
 } AICharacters_t;
 
@@ -488,14 +529,16 @@ typedef enum
 typedef enum {
 	WP_NONE,                
 	// Melee Weapons
-	WP_KNIFE,               
-	WP_DAGGER,              
-	// One handed pistols
+	WP_KNIFE,          
+	// Pistols
 	WP_LUGER,              
 	WP_SILENCER,           
     WP_COLT,               
 	WP_TT33,               
-	WP_REVOLVER,           
+	WP_REVOLVER,
+	WP_HDM,
+	WP_AKIMBO,
+	WP_DUAL_TT33,           
 	// SMGs
 	WP_MP40,             
 	WP_THOMPSON,         
@@ -503,11 +546,10 @@ typedef enum {
 	WP_PPSH,             
 	WP_MP34,             
 	// Rifles
-	WP_MAUSER,              
-	WP_SNIPERRIFLE,        
+	WP_MAUSER,                    
 	WP_GARAND,            
-	WP_SNOOPERSCOPE,
 	WP_MOSIN,
+	WP_DELISLE,
 	// Semi auto rifles
 	WP_M1GARAND,
 	WP_G43,
@@ -517,8 +559,9 @@ typedef enum {
 	WP_FG42,
 	WP_BAR,
 	// Shotguns
-	WP_M97, 
-	WP_AUTO5, 
+	WP_M97,
+	WP_AUTO5,
+	WP_M30, 
 	// Heavy Weapons
 	WP_BROWNING,
 	WP_MG42M,
@@ -531,29 +574,28 @@ typedef enum {
 	WP_GRENADE_LAUNCHER,
     WP_GRENADE_PINEAPPLE,
 	WP_DYNAMITE,
-	WP_AIRSTRIKE,          
+	WP_DYNAMITE_ENG,
+	WP_AIRSTRIKE,
+	WP_ARTY,
 	WP_POISONGAS,
-	// Misc Alt modes
-	WP_FG42SCOPE,   
-	WP_AKIMBO,     
-	WP_DUAL_TT33,     
-	WP_M7,      
-	WP_M1941SCOPE,
-
-	WP_P38,                 
-	WP_M30,                
-	WP_DELISLE,            
-	WP_DELISLESCOPE, 	   
-	WP_HDM,             	
-	WP_HOLYCROSS,           
+	WP_SMOKETRAIL,          
+	WP_HOLYCROSS,
+	WP_SMOKE_BOMB,
+	// Alt Modes
+	WP_SNIPERRIFLE, 
+    WP_SNOOPERSCOPE,
+	WP_DELISLESCOPE,
+    WP_M1941SCOPE,
+	WP_FG42SCOPE,
+	WP_M7,
     // Misc stuff, not actual weapons
 	WP_DUMMY_MG42,
 	WP_MONSTER_ATTACK1,     	
 	WP_MONSTER_ATTACK2,     	
-	WP_MONSTER_ATTACK3,    	
+	WP_MONSTER_ATTACK3,    	       
 	WP_SNIPER,              
-	WP_MORTAR,             
-	VERYBIGEXPLOSION,     
+	WP_MORTAR,           
+	VERYBIGEXPLOSION,       	
 
 	//Extra bonus VR content!
 	WP_MELEE,
@@ -570,21 +612,28 @@ typedef struct ammoTable_s {
 	int weaponClass;
 	weapon_t weapAlts;
 	int weaponTeam;
-	int maxammo;            
-	int uses;               
-	int maxclip;            
-	int reloadTime;         
+	int maxammo;
+	int maxammoUpgraded;            
+	int uses;
+	int usesUpgraded;               
+	int maxclip;
+	int maxclipUpgraded;            
+	int reloadTime;
 	int reloadTimeFull;         
 	int fireDelayTime;      
 	int nextShotTime;
-	int nextShotTime2;        
+	int nextShotTimeUpgraded;
+	int nextShotTime2;       
+	int nextShotTime2Upgraded; 
 	int maxHeat;            
 	int coolRate;    
 	int playerDamage;
+	int playerDamageUpgraded;
 	int aiDamage;
 	int playerSplashRadius;
 	int aiSplashRadius;
 	int spread;
+	int spreadUpgraded;
 	int aimSpreadScaleAdd;
     float spreadScale;  
 	int weapRecoilDuration;
@@ -609,10 +658,10 @@ typedef struct ammoTable_s {
 // Skill-based ammo parameters
 typedef struct ammoskill_s {
 	int maxammo;
+	int maxammoUpgraded;
 	int maxclip;
+	int maxclipUpgraded;
 } ammoskill_t;
-
-//extern int weapAlts[]; 
 
 extern ammoTable_t ammoTable[WP_NUM_WEAPONS];
 extern ammoskill_t ammoSkill[GSKILL_NUM_SKILLS][WP_NUM_WEAPONS];
@@ -629,8 +678,10 @@ static const int autoReloadWeapons[] = {
 	WP_FLAMETHROWER,
 	WP_POISONGAS,
 	WP_AIRSTRIKE,
+	WP_DYNAMITE_ENG,
 	WP_KNIFE,
 	WP_M7,
+	WP_ARTY,
 };
 
  // entityState_t->event values
@@ -718,6 +769,7 @@ typedef enum {
 	EV_FILL_CLIP,
 	EV_FILL_CLIP_FULL,
 	EV_FILL_CLIP_AI,
+	EV_RESET_ZOOM,
 	EV_WEAP_OVERHEAT,
 	EV_CHANGE_WEAPON,
 	EV_FIRE_WEAPON,
@@ -745,6 +797,8 @@ typedef enum {
 	EV_USE_ITEM13,
 	EV_USE_ITEM14,
 	EV_USE_ITEM15,
+	EV_USE_ITEM16,
+	EV_USE_ITEM17,
 	EV_ITEM_RESPAWN,
 	EV_ITEM_POP,
 	EV_PLAYER_TELEPORT_IN,
@@ -759,8 +813,9 @@ typedef enum {
 	EV_RAILTRAIL,
 	EV_VENOM,
 	EV_VENOMFULL,
-	EV_BULLET,              // otherEntity is the shooter
+	EV_HITSOUNDS,              // otherEntity is the shooter
 	EV_LOSE_HAT,            
+	EV_REATTACH_HAT,
 	EV_GIB_HEAD,            // only blow off the head
 	EV_PAIN,
 	EV_CROUCH_PAIN,
@@ -771,6 +826,8 @@ typedef enum {
 	EV_OBITUARY,
 	EV_POWERUP_QUAD,
 	EV_POWERUP_BATTLESUIT,
+	EV_POWERUP_BATTLESUIT_SURV,
+	EV_POWERUP_XSHIELD,
 	EV_POWERUP_REGEN,
 	EV_GIB_PLAYER,          // gib a previously living player
 	EV_GIB_VAMPIRISM,
@@ -832,6 +889,9 @@ typedef enum {
 	EV_THROWKNIFE,
 	EV_COUGH,
 	EV_QUICKGRENS,
+	EV_PLAYER_HIT,  // hitsound event
+	EV_STOP_RELOADING_SOUND,
+    EV_EMP_WAVE,
 	EV_MAX_EVENTS   // just added as an 'endcap'
 } entity_event_t;
 
@@ -999,6 +1059,15 @@ typedef enum {
 extern char *animStrings[];     // defined in bg_misc.c
 extern char *animStringsOld[];      // defined in bg_misc.c
 
+typedef enum
+{
+	HIT_NONE = 0,
+	HIT_BODYSHOT,
+	HIT_HEADSHOT,
+	HIT_TEAMSHOT,
+	HIT_DEATHSHOT,		// this shot killed the enemy
+	HIT_MAX_NUM
+} hitEvent_t;
 
 typedef enum {
 	WEAP_IDLE1,
@@ -1016,6 +1085,12 @@ typedef enum {
 	WEAP_DROP2,
 	WEAP_SPRINTIN,
 	WEAP_SPRINTOUT,
+	WEAP_RELOAD1_FAST,
+	WEAP_RELOAD2_FAST,
+	WEAP_RELOAD3_FAST,
+	WEAP_ALTSWITCHFROM_FAST,
+	WEAP_ALTSWITCHTO_FAST,
+	WEAP_DROP2_FAST,
 	MAX_WP_ANIMATIONS
 } weapAnimNumber_t;
 
@@ -1105,8 +1180,6 @@ typedef enum {
 	MOD_BFG_SPLASH,
 	MOD_KNIFE,
 	MOD_THROWKNIFE,
-	MOD_DAGGER,
-	MOD_DAGGER_STEALTH,	
 	MOD_KNIFE2,
 	MOD_KNIFE_STEALTH,
 	MOD_LUGER,
@@ -1121,7 +1194,7 @@ typedef enum {
 	MOD_GARAND,
 	MOD_SNOOPERSCOPE,
 	MOD_SILENCER,   
-	MOD_AKIMBO,     
+	MOD_AKIMBO,
 	MOD_DUAL_TT33,     
 	MOD_FG42,
 	MOD_FG42SCOPE,
@@ -1131,11 +1204,11 @@ typedef enum {
 	MOD_VENOM,
 	MOD_VENOM_FULL,
 	MOD_FLAMETHROWER,
+	MOD_FLAMETRAP,
 	MOD_TESLA,
 	MOD_HOLYCROSS,
 	MOD_MP34,
 	MOD_TT33,
-	MOD_P38,
 	MOD_PPSH,
 	MOD_MOSIN,
 	MOD_G43,
@@ -1161,6 +1234,7 @@ typedef enum {
 	MOD_DYNAMITE,
 	MOD_DYNAMITE_SPLASH,
 	MOD_AIRSTRIKE,
+	MOD_ARTY,
 	MOD_WATER,
 	MOD_SLIME,
 	MOD_LAVA,
@@ -1173,6 +1247,7 @@ typedef enum {
 	MOD_GRAPPLE,
 	MOD_EXPLOSIVE,
 	MOD_POISONGAS,
+	MOD_SMOKEBOMB,
 	MOD_ZOMBIESPIT,
 	MOD_ZOMBIESPIT_SPLASH,
 	MOD_ZOMBIESPIRIT,
@@ -1190,23 +1265,22 @@ typedef enum {
 
 typedef enum
 {
-	WEAPON_CLASS_NONE,
-	WEAPON_CLASS_MELEE,
-	WEAPON_CLASS_PISTOL,
-	WEAPON_CLASS_SMG,
-	WEAPON_CLASS_RIFLE,
-	WEAPON_CLASS_ASSAULT_RIFLE,
-	WEAPON_CLASS_SHOTGUN,
-	WEAPON_CLASS_GRENADE,
-	WEAPON_CLASS_RIFLENADE,
-	WEAPON_CLASS_MG,
-	WEAPON_CLASS_LAUNCHER,
-	WEAPON_CLASS_BEAM,
-	WEAPON_CLASS_SCOPED,
-	WEAPON_CLASS_SCOPABLE,
-	WEAPON_CLASS_AKIMBO,
-	WEAPON_CLASS_UNUSED
-
+	WEAPON_CLASS_NONE  =         0b0000000000000000,
+	WEAPON_CLASS_MELEE =         0b0000000000000001,
+	WEAPON_CLASS_PISTOL =        0b0000000000000010,
+	WEAPON_CLASS_SMG =           0b0000000000000100,
+	WEAPON_CLASS_RIFLE =         0b0000000000001000,
+	WEAPON_CLASS_ASSAULT_RIFLE = 0b0000000000010000,
+	WEAPON_CLASS_SHOTGUN =       0b0000000000100000,
+	WEAPON_CLASS_GRENADE =       0b0000000001000000,
+	WEAPON_CLASS_RIFLENADE =     0b0000000010000000,
+	WEAPON_CLASS_MG =            0b0000000100000000,
+	WEAPON_CLASS_LAUNCHER =      0b0000001000000000,
+	WEAPON_CLASS_BEAM =          0b0000010000000000,
+	WEAPON_CLASS_SCOPED =        0b0000100000000000,
+	WEAPON_CLASS_SCOPABLE =      0b0001000000000000,
+	WEAPON_CLASS_AKIMBO =        0b0010000000000000,
+	WEAPON_CLASS_UNUSED =        0b0100000000000000,
 } weaponClass_t;
 
 typedef enum
@@ -1237,11 +1311,12 @@ typedef enum {
 	IT_KEY,
 	IT_TREASURE,            // gold bars, etc.  things that can be picked up and counted for a tally at end-level
 	IT_CLIPBOARD,           // 'clipboard' used as a general term for 'popup' items where you pick up the item and it pauses and opens a menu
-	IT_TEAM
+	IT_TEAM,
+	IT_PERK
 } itemType_t;
 
 #define MAX_ITEM_MODELS 3
-#define MAX_ITEM_ICONS 16
+#define MAX_ITEM_ICONS 32
 
 typedef struct gitem_s {
 	char        *classname; // spawning name
@@ -1259,12 +1334,13 @@ typedef struct gitem_s {
 	int giTag;
 
 	int giAmmoIndex;            // type of weapon ammo this uses.  (ex. WP_MP40 and WP_LUGER share 9mm ammo, so they both have WP_LUGER for giAmmoIndex)
+	int giAmmoIndexSurv;        // no ammo sharing in Survival
 	int giClipIndex;            // which clip this weapon uses.  this allows the sniper rifle to use the same clip as the garand, etc.
 
 	char        *precaches;     // string of all models and images this item will use
 	char        *sounds;        // string of all sounds this item will use
 
-	int gameskillnumber[5];
+	int gameskillnumber[6];
 } gitem_t;
 
 // included in both the game dll and the client
@@ -1281,9 +1357,11 @@ gitem_t *BG_FindItemForAmmo( int ammo );
 gitem_t *BG_FindItemForKey( wkey_t k, int *index );
 weapon_t BG_FindAmmoForWeapon( weapon_t weapon );
 weapon_t BG_FindClipForWeapon( weapon_t weapon );
+gitem_t *BG_FindItemForPerk( perk_t perk );
 
-qboolean BG_AkimboFireSequence( int weapon, int akimboClip, int coltClip, int triggerState );
+qboolean BG_AkimboFireSequence( int weapon, int akimboClip, int triggerState );
 
+#define IS_VALID_WEAPON(w) ((w) > WP_NONE && (w) < WP_NUM_WEAPONS)
 #define ITEM_INDEX( x ) ( ( x ) - bg_itemlist )
 
 qboolean    BG_CanItemBeGrabbed( const entityState_t *ent, const playerState_t *ps );
@@ -1787,10 +1865,14 @@ qboolean PC_Color_Parse( int handle, vec4_t *c );
 char *BG_GetWeaponFilename( weapon_t weaponNum );
 qboolean BG_ParseAmmoTable( int handle, weapon_t weaponNum );
 void BG_SetWeaponForSkill( weapon_t weaponNum, gameskill_t skill );
+int BG_GetMaxClip(const playerState_t *ps, int weapon);
+int BG_GetMaxAmmo(const playerState_t *ps, int weapon, float ltAmmoBonus);
+int BG_GetNextShotTime(const playerState_t *ps, weapon_t weapon, qboolean altFire);
 
 char *BG_GetCharacterFilename( AICharacters_t characterNum );
 qboolean BG_ParseBehaviorTable( int handle, AICharacters_t characterNum );
 void BG_SetBehaviorForSkill( AICharacters_t characterNum, gameskill_t skill );
+void BG_SetBehaviorForSurvival(AICharacters_t characterNum);
 
 // New ET vehicle path system
 #define MAX_PATH_CORNERS        512

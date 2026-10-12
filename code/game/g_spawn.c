@@ -186,6 +186,11 @@ field_t fields[] = {
 
 	{"stringname",       FOFS( translation ),          F_STRING},
 	{"canSpeak",         FOFS( canSpeak ),             F_INT},
+	{"price",            FOFS( price ),                F_INT},
+	{"buy_item",         FOFS( buy_item ),           F_STRING},
+	{"isWeapon",         FOFS( isWeapon ),             F_INT},
+	{"wave",             FOFS( wave ),                F_INT},
+	{"oneshot",          FOFS( oneshot ),                F_INT},
 	{NULL}
 };
 
@@ -198,6 +203,8 @@ typedef struct {
 void SP_info_player_start( gentity_t *ent );
 void SP_info_player_deathmatch( gentity_t *ent );
 void SP_info_player_intermission( gentity_t *ent );
+
+void SP_info_ai_respawn( gentity_t *ent );
 
 void SP_func_plat( gentity_t *ent );
 void SP_func_static( gentity_t *ent );
@@ -308,6 +315,9 @@ void SP_props_box_64( gentity_t *self );
 void SP_ai_soldier( gentity_t *ent );
 void SP_ai_american( gentity_t *ent );
 void SP_ai_zombie( gentity_t *ent );
+void SP_ai_zombie_surv( gentity_t *ent );
+void SP_ai_zombie_flame( gentity_t *ent );
+void SP_ai_zombie_ghost( gentity_t *ent );
 void SP_ai_warzombie( gentity_t *ent );
 void SP_ai_marker( gentity_t *ent );
 void SP_ai_effect( gentity_t *ent );
@@ -327,6 +337,10 @@ void SP_ai_protosoldier( gentity_t *ent );
 void SP_ai_partisan( gentity_t *ent );
 void SP_ai_russian( gentity_t *ent );
 void SP_ai_civilian( gentity_t *ent );
+void SP_ai_loper_special( gentity_t *ent );
+void SP_ai_mercenary( gentity_t *ent );
+void SP_ai_trench( gentity_t *ent );
+void SP_ai_flesh( gentity_t *ent );
 // done.
 
 // Rafael particles
@@ -428,12 +442,17 @@ void SP_trigger_deathCheck( gentity_t *ent );
 void SP_misc_spawner( gentity_t *ent );
 void SP_props_decor_Scale( gentity_t *ent );
 
+void SP_target_buy( gentity_t *ent );
+
 spawn_t spawns[] = {
 	// info entities don't do anything at all, but provide positional
 	// information for things controlled by other processes
 	{"info_player_start", SP_info_player_start},
 	{"info_player_deathmatch", SP_info_player_deathmatch},
 	{"info_player_intermission", SP_info_player_intermission},
+
+	{"info_ai_respawn", SP_info_ai_respawn},
+	
 	{"info_null", SP_info_null},
 	{"info_notnull", SP_info_notnull},
 	{"info_notnull_big", SP_info_notnull_big},   //----(SA)	added
@@ -581,6 +600,9 @@ spawn_t spawns[] = {
 	{"ai_soldier", SP_ai_soldier},
 	{"ai_american", SP_ai_american},
 	{"ai_zombie", SP_ai_zombie},
+	{"ai_zombie_surv", SP_ai_zombie_surv},
+	{"ai_zombie_flame", SP_ai_zombie_flame},
+	{"ai_zombie_ghost", SP_ai_zombie_ghost},
 	{"ai_warzombie", SP_ai_warzombie},
 	{"ai_venom", SP_ai_venom},
 	{"ai_loper", SP_ai_loper},
@@ -597,6 +619,10 @@ spawn_t spawns[] = {
 	{"ai_partisan", SP_ai_partisan},
 	{"ai_russian", SP_ai_russian},
 	{"ai_civilian", SP_ai_civilian},
+	{"ai_loper_special", SP_ai_loper_special},
+	{"ai_mercenary", SP_ai_mercenary},
+	{"ai_trench", SP_ai_trench},
+	{"ai_flesh", SP_ai_flesh},
 
 
 	{"ai_marker", SP_ai_marker},
@@ -693,6 +719,8 @@ spawn_t spawns[] = {
 	{"script_model_med", SP_script_model_med},
 	{"script_mover", SP_script_mover},
 	{"script_multiplayer", SP_script_multiplayer},           // DHM - Nerve
+
+	{"target_buy", SP_target_buy},
 
 	{NULL, 0}
 };
@@ -1003,7 +1031,8 @@ qboolean G_LoadEntsFile( void ) {
 		}
 	}
 
-	level.extraEntsScript = G_Alloc( len );
+	level.extraEntsScript = G_Alloc( len + 1 );
+	memset( level.extraEntsScript, 0 , len + 1 );
 	trap_FS_Read( level.extraEntsScript, len, f );
 
 	trap_FS_FCloseFile( f );

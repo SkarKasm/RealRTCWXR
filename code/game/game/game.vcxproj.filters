@@ -129,6 +129,24 @@
     <ClCompile Include="..\g_save.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\ai_cast_func_hein.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ai_cast_loadouts.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\ai_cast_survival.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\g_survival_buy.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\g_survival_misc.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\g_survival_score.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\g_script.c">
       <Filter>Source Files</Filter>
     </ClCompile>

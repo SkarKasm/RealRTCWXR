@@ -8,7 +8,7 @@
 
 //#define HAVE_STDINT_H 1
 //#define _HAVE_STDINT_H 1
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 
 const float ZOOM_FOV_ADJUST = 1.1f;

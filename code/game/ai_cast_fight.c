@@ -345,6 +345,7 @@ qboolean AICast_EntityVisible( cast_state_t *cs, int enemynum, qboolean directvi
 	}
 	vis = &cs->vislist[enemynum];
 
+
 	if ( !vis->visible_timestamp && !vis->real_visible_timestamp ) {
 		return qfalse;  // they are not visible at all
 
@@ -464,124 +465,146 @@ qboolean AICast_SameTeam( cast_state_t *cs, int enemynum ) {
 
 }
 
+static inline qboolean AI_IsZombie(int c) {
+    return (c == AICHAR_ZOMBIE || c == AICHAR_ZOMBIE_SURV || c == AICHAR_ZOMBIE_FLAME || c == AICHAR_ZOMBIE_GHOST || c == AICHAR_FLESH);
+}
+
+#define BBOX_ALLOWANCE 50.0f
+
 /*
 ==================
 AICast_WeaponRange
+returns the effective range of the weapon
 ==================
 */
-float AICast_WeaponRange( cast_state_t *cs, int weaponnum ) {
-	switch ( weaponnum ) {
+float AICast_WeaponRange(cast_state_t *cs, int weaponnum) {
+    // Safety guard for arrays indexed by weaponnum
+    if (weaponnum < 0 || weaponnum >= WP_NUM_WEAPONS) {
+        return 3000.0f;
+    }
+
+    switch (weaponnum) {
 	case WP_TESLA:
-		switch ( cs->aiCharacter ) {
-		case AICHAR_SUPERSOLDIER:   // BOSS2
-			// if they have a panzer, give this weapon a shorter range
-			if ( !COM_BitCheck( cs->bs->cur_ps.weapons, WP_PANZERFAUST ) ) {
-				return TESLA_SUPERSOLDIER_RANGE;
-			}
-		case AICHAR_SUPERSOLDIER_LAB:   // BOSS2
-			// if they have a panzer, give this weapon a shorter range
-			if ( !COM_BitCheck( cs->bs->cur_ps.weapons, WP_PANZERFAUST ) ) {
-				return TESLA_SUPERSOLDIER_LAB_RANGE;
-			}
+		switch (cs->aiCharacter)
+		{
+		case AICHAR_SUPERSOLDIER:
+			return TESLA_SUPERSOLDIER_RANGE;
+		case AICHAR_SUPERSOLDIER_LAB:
+			return TESLA_SUPERSOLDIER_LAB_RANGE;
 		case AICHAR_PRIEST:
-		return 450;
-		}
-		return ( TESLA_RANGE * 0.9 ) - 50;  // allow for bounding box
-	case WP_FLAMETHROWER:
-		return ( FLAMETHROWER_RANGE * 0.5 ) - 50;   // allow for bounding box
-	case WP_HOLYCROSS:
-		return ( HOLYCROSS_RANGE * 0.9 ) - 50;  // allow for bounding box
-	case WP_PANZERFAUST:
-		return 8000;
-
-	case WP_GRENADE_LAUNCHER:
-	case WP_GRENADE_PINEAPPLE:
-		return 800;
-	case WP_MONSTER_ATTACK1:
-		switch ( cs->aiCharacter ) {
-		case AICHAR_HEINRICH:
-			if ( cs->weaponFireTimes[weaponnum] < level.time - 8000 ) {
-				return 500;     // lots of room for stomping
-			} else {
-				return 150;     // come in real close // was 120
-			}
-		case AICHAR_HELGA:  // helga BOSS1 melee
-			return 100;  // RealRTCW was 80
-		case AICHAR_WARZOMBIE:
-			return 90;      // RealRTCW was 80
-		case AICHAR_DOG: // dog melee
-			return 45;
-		case AICHAR_LOPER:  // close attack, head-butt, fist
-			return 60;
-		case AICHAR_BLACKGUARD:
-			return BLACKGUARD_MELEE_RANGE;
-		case AICHAR_XSHEPHERD:
-			return XSHEPHERD_MELEE_RANGE;
-		case AICHAR_ZOMBIE: // zombie flaming attack
-			return ZOMBIE_FLAME_RADIUS - 50;      // get well within range before starting
-		}
-		break;
-	case WP_MONSTER_ATTACK2:
-		switch ( cs->aiCharacter ) {
-		case AICHAR_HEINRICH:
-			return 8000;
-		case AICHAR_ZOMBIE: // zombie spirit attack
-			return 1000;
-		case AICHAR_HELGA:  // zombie spirit attack // RealRTCW was 1900
-			return 2000;
-		case AICHAR_LOPER:  // loper leap attack
-			return 8000;    // use it to gain on them also
-		}
-		break;
-	case WP_MONSTER_ATTACK3:
-		switch ( cs->aiCharacter ) {
-		case AICHAR_HEINRICH:   // spirits
-			return 50000;
-		case AICHAR_LOPER:  // loper ground attack
-			return LOPER_GROUND_RANGE;
-		case AICHAR_WARZOMBIE:  // warzombie defense
-			return 2000;
-		case AICHAR_ZOMBIE:
-			return 44;
-		case AICHAR_DOG:
-			return 2000;	// dog bark
-		}
-		break;
-
-		// Rafael added these changes as per Mikes request
-	case WP_MAUSER:
-	case WP_GARAND:
-	case WP_SNIPERRIFLE:
-	case WP_SNOOPERSCOPE:
-	case WP_M1941SCOPE:
-		return 8000;
-		break;
-
-	case WP_DELISLE:
-	case WP_DELISLESCOPE:
-		return 5000;
-		break;
-	case WP_VENOM:
-		switch ( cs->aiCharacter ) {
-		case AICHAR_SOLDIER:  
-		case AICHAR_VENOM: 
-			return 1000;
-		case AICHAR_SUPERSOLDIER: 
-			return 1500;
-		case AICHAR_SUPERSOLDIER_LAB: 
-			return 1000;
-		case AICHAR_PROTOSOLDIER:  
-			return 1500;
-		case AICHAR_XSHEPHERD:
-			return 500;	
-		}
+			return 450.0f;
 		default:
-		return 1000;
-		break;
+			return (TESLA_RANGE * 0.9f) - BBOX_ALLOWANCE;
+		}
 
-	}
-	// default range
-	return 3000;
+	case WP_FLAMETHROWER:
+        return (FLAMETHROWER_RANGE * 0.5f) - BBOX_ALLOWANCE;
+
+    case WP_HOLYCROSS:
+        return (HOLYCROSS_RANGE * 0.9f) - BBOX_ALLOWANCE;
+
+    case WP_PANZERFAUST:
+        return 8000.0f;
+
+	case WP_M97:
+	case WP_AUTO5:
+	case WP_M30:
+	    return 475.0f;
+    case WP_GRENADE_LAUNCHER:
+    case WP_GRENADE_PINEAPPLE:
+	case WP_SMOKE_BOMB:
+        return 800.0f;
+
+    case WP_MONSTER_ATTACK1:
+        switch (cs->aiCharacter) {
+            case AICHAR_HEINRICH:
+                if (weaponnum >= 0 && weaponnum < WP_NUM_WEAPONS && cs->weaponFireTimes[weaponnum] < level.time - 8000) {
+                    return 500.0f;   // lots of room for stomping
+                } else {
+                    return 150.0f;   // come in real close // was 120
+                }
+            case AICHAR_HELGA:       return 100.0f; // RealRTCW was 80
+            case AICHAR_WARZOMBIE:   return 90.0f;  // RealRTCW was 80
+            case AICHAR_DOG:         return 45.0f;  // dog melee
+            case AICHAR_LOPER:       return 60.0f;  // head-butt, fist
+            case AICHAR_LOPER_SPECIAL:       return 60.0f;  // head-butt, fist
+            case AICHAR_BLACKGUARD:  return BLACKGUARD_MELEE_RANGE;
+            case AICHAR_XSHEPHERD:   return XSHEPHERD_MELEE_RANGE;
+            default:
+                if (AI_IsZombie(cs->aiCharacter)) {
+                    return ZOMBIE_FLAME_RADIUS - BBOX_ALLOWANCE; // get well within range before starting
+                }
+                break;
+        }
+        break;
+
+    case WP_MONSTER_ATTACK2:
+        switch (cs->aiCharacter) {
+            case AICHAR_HEINRICH: return 8000.0f;
+            case AICHAR_HELGA:    return 2000.0f; // RealRTCW was 1900
+            case AICHAR_LOPER:    return 8000.0f; // leap: use it to gain on them also
+            case AICHAR_LOPER_SPECIAL:    return 8000.0f; // leap: use it to gain on them also
+            default:
+                if (AI_IsZombie(cs->aiCharacter)) {
+                    return 1000.0f; // zombie spirit attack
+                }
+                break;
+        }
+        break;
+
+    case WP_MONSTER_ATTACK3:
+        switch (cs->aiCharacter) {
+            case AICHAR_HEINRICH:  return 50000.0f;         // spirits
+            case AICHAR_LOPER:     return LOPER_GROUND_RANGE;
+			case AICHAR_LOPER_SPECIAL:     return LOPER_GROUND_RANGE;
+            case AICHAR_WARZOMBIE: return 2000.0f;          // defense
+            case AICHAR_DOG:       return 2000.0f;          // bark
+            default:
+                if (AI_IsZombie(cs->aiCharacter)) {
+                    return 44.0f;
+                }
+                break;
+        }
+        break;
+
+    // Rafael added these changes as per Mike's request
+    case WP_MAUSER:
+    case WP_GARAND:
+    case WP_SNIPERRIFLE:
+    case WP_SNOOPERSCOPE:
+    case WP_M1941SCOPE:
+        return 8000.0f;
+
+    case WP_DELISLE:
+    case WP_DELISLESCOPE:
+        return 5000.0f;
+
+    case WP_VENOM: {
+        // Provide explicit fallback for unknown characters when using Venom
+        switch (cs->aiCharacter) {
+            case AICHAR_SOLDIER:
+			case AICHAR_MERCENARY:
+			case AICHAR_TRENCH:
+            case AICHAR_VENOM:
+            case AICHAR_SUPERSOLDIER_LAB:
+                return 1000.0f;
+            case AICHAR_SUPERSOLDIER:
+            case AICHAR_PROTOSOLDIER:
+                return 1500.0f;
+            case AICHAR_XSHEPHERD:
+                return 500.0f;
+            default:
+                return 1000.0f; // reasonable default for Venom
+        }
+    }
+
+    default:
+        // Outer-switch default: only reached for unknown weaponnum
+        return 3000.0f;
+    }
+
+    // If we break out of an inner switch without returning, use a sane default
+    return 3000.0f;
 }
 
 /*
@@ -954,6 +977,7 @@ qboolean AICast_WeaponUsable( cast_state_t *cs, int weaponNum ) {
 		// don't attempt to lob a grenade more than this often, since we will abort a grenade
 		// throw if it's not safe, we shouldn't keep switching back too quickly
 	case WP_DYNAMITE:
+	case WP_DYNAMITE_ENG:
 	case WP_GRENADE_LAUNCHER:
 	case WP_GRENADE_PINEAPPLE:
 		if ( cs->enemyNum < 0 ) {
@@ -982,6 +1006,9 @@ qboolean AICast_WeaponUsable( cast_state_t *cs, int weaponNum ) {
 	case WP_MONSTER_ATTACK1:
 		switch ( g_entities[cs->entityNum].aiCharacter ) {
 		case AICHAR_ZOMBIE: // zombie flaming attack
+		case AICHAR_ZOMBIE_SURV:
+		case AICHAR_ZOMBIE_FLAME:
+		case AICHAR_ZOMBIE_GHOST:
 			delay = 4000;
 			if ( dist < 0 ) { // || dist < 128) {
 				return qfalse;
@@ -999,6 +1026,7 @@ qboolean AICast_WeaponUsable( cast_state_t *cs, int weaponNum ) {
 
 			// melee attacks are always available
 		case AICHAR_LOPER:
+		case AICHAR_LOPER_SPECIAL:
 		case AICHAR_WARZOMBIE:
 	    case AICHAR_DOG:
 			return qtrue;   // always usable
@@ -1028,6 +1056,9 @@ qboolean AICast_WeaponUsable( cast_state_t *cs, int weaponNum ) {
 			delay = 9999999;
 			break;
 		case AICHAR_ZOMBIE:
+		case AICHAR_ZOMBIE_SURV:
+		case AICHAR_ZOMBIE_FLAME:
+		case AICHAR_ZOMBIE_GHOST:
 			delay = 6000;
 			// zombie "flying spirit" attack
 			if ( dist < 64 ) {
@@ -1060,6 +1091,7 @@ qboolean AICast_WeaponUsable( cast_state_t *cs, int weaponNum ) {
 			}
 			break;
 		case AICHAR_LOPER:  // loper leap attack
+		case AICHAR_LOPER_SPECIAL:
 			if ( cs->bs->areanum && VectorLength( cs->bs->velocity ) > 1 ) {    // if we are in a valid area, and are persuing, then leave a delay
 				// if there isn't a direct trace to our enemy, then fail
 				if ( cs->enemyNum >= 0 ) {
@@ -1091,6 +1123,7 @@ qboolean AICast_WeaponUsable( cast_state_t *cs, int weaponNum ) {
 			delay = 7000;
 			break;
 		case AICHAR_LOPER:  // loper ground zap
+		case AICHAR_LOPER_SPECIAL:
 			delay = 3500;
 			if ( dist < 0 || dist > LOPER_GROUND_RANGE ) {
 				return qfalse;
@@ -1109,6 +1142,10 @@ qboolean AICast_WeaponUsable( cast_state_t *cs, int weaponNum ) {
 			}
 			break;
 		case AICHAR_ZOMBIE:
+		case AICHAR_ZOMBIE_SURV:
+		case AICHAR_ZOMBIE_GHOST:
+		case AICHAR_ZOMBIE_FLAME:
+		case AICHAR_FLESH:
 			return qtrue;   // always usable
 		default:
 			delay = -1;
@@ -1251,8 +1288,8 @@ float AICast_Aggression( cast_state_t *cs ) {
 	//	scale -= (cs->enemyHeight)/800.0;
 
 	//if very low on health
-	if ( bs->cur_ps.stats[STAT_HEALTH] < 50 ) {
-		scale -= ( 1.0 - cs->attributes[AGGRESSION] ) * ( 1.0 - ( (float)bs->cur_ps.stats[STAT_HEALTH] / 50.0 ) );
+	if ( bs->cur_ps.stats[STAT_HEALTH] < 5 ) {
+		scale -= ( 1.0 - cs->attributes[AGGRESSION] ) * ( 1.0 - ( (float)bs->cur_ps.stats[STAT_HEALTH] / 5.0 ) );
 	}
 
 	// if they've recently hit us, factor that in, so we get scared off by being
@@ -1464,7 +1501,7 @@ void AICast_WeaponSway( cast_state_t *cs, vec3_t ofs ) {
 	VectorClear( ofs );
 	switch ( cs->weaponNum ) {
 	case WP_MONSTER_ATTACK1:
-		if ( cs->aiCharacter != AICHAR_ZOMBIE ) {
+		if ( cs->aiCharacter != AICHAR_ZOMBIE && cs->aiCharacter != AICHAR_ZOMBIE_SURV && cs->aiCharacter != AICHAR_ZOMBIE_GHOST && cs->aiCharacter != AICHAR_ZOMBIE_FLAME ) {
 			break;      // only allow flaming zombie beyond here
 		}
 	case WP_FLAMETHROWER:
@@ -1804,6 +1841,10 @@ qboolean AICast_AIDamageOK( cast_state_t *cs, cast_state_t *ocs ) {
 			return qfalse;
 		}
 
+		if ( cs->aiCharacter == AICHAR_LOPER_SPECIAL && ocs->aiCharacter == AICHAR_LOPER_SPECIAL ) {
+			return qfalse;
+		}
+
 		return qtrue;
 	}
 }
@@ -2072,6 +2113,10 @@ void AICast_CheckDangerousEntity( gentity_t *ent, int dangerFlags, float dangerD
 	gentity_t *trav;
 	int i, endTime;
 	float dist;
+
+	if (g_gametype.integer == GT_SURVIVAL) {
+		return; // don't do this in survival mode
+	}
 	//
 	//
 	if ( dangerFlags & DANGER_MISSILE ) {

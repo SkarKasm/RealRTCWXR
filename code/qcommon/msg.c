@@ -944,6 +944,7 @@ netField_t entityStateFields[] =
 	{ NETF( otherEntityNum2 ), GENTITYNUM_BITS },
 	{ NETF( groundEntityNum ), GENTITYNUM_BITS },
 	{ NETF( loopSound ), 10 },
+	{ NETF( oldloopSound ), 10 },
 	{ NETF( constantLight ), 32 },
 	{ NETF( dl_intensity ), 32 }, //----(SA)	longer now to carry the corona colors
 	{ NETF( modelindex ), 10 },
@@ -977,6 +978,7 @@ netField_t entityStateFields[] =
 	{ NETF( effect3Time ), 32},
 	{ NETF( aiState ), 2},
 	{ NETF( animMovetype ), 6},
+	{ NETF( perks ), MAX_PERKS },
 };
 
 
@@ -1413,6 +1415,7 @@ netField_t playerStateFields[] =
 	{ PSF( classWeaponTime ), 32}, // JPW NERVE
 	{ PSF( footstepCount ), 0},
 	{ PSF( holding ), 32},
+	{ PSF( simpleZoomed ), 1 },
 };
 
 /*
@@ -1429,8 +1432,9 @@ void MSG_WriteDeltaPlayerstate( msg_t *msg, struct playerState_s *from, struct p
 	int ammobits[4];                //----(SA)	modified
 	int clipbits;                   //----(SA)	added
 	int powerupbits;
-	int holdablebits;
+    int holdablebits[2];
 	int numFields;
+	int perksbits;
 	netField_t      *field;
 	int             *fromF, *toF;
 	float fullFloat;
@@ -1517,20 +1521,33 @@ void MSG_WriteDeltaPlayerstate( msg_t *msg, struct playerState_s *from, struct p
 			persistantbits |= 1 << i;
 		}
 	}
-	holdablebits = 0;
-	for ( i = 0 ; i < 16 ; i++ ) {
-		if ( to->holdable[i] != from->holdable[i] ) {
-			holdablebits |= 1 << i;
-		}
-	}
+	holdablebits[0] = 0;
+	holdablebits[1] = 0;
+	for ( j = 0; j < 2; j++ ) {
+        for ( i = 0; i < 16; i++ ) {
+            int idx = i + j * 16;
+            if ( idx >= MAX_HOLDABLE ) break;
+
+            if ( to->holdable[idx] != from->holdable[idx] ) {
+                holdablebits[j] |= 1 << i;
+            }
+        }
+    }
 	powerupbits = 0;
 	for (i = 0; i < MAX_POWERUPS; i++) {
 		if (to->powerups[i] != from->powerups[i]) {
 			powerupbits |= 1 << i;
 		}
 	}
+	perksbits = 0;
+	for (i = 0; i < MAX_PERKS; i++) {
+		if (to->perks[i] != from->perks[i]) {
+			perksbits |= 1 << i;
+		}
+	}
 
-	if ( statsbits || persistantbits || holdablebits || powerupbits ) {
+	if (statsbits || persistantbits || holdablebits[0] || holdablebits[1] || powerupbits || perksbits)
+	{
 
 		MSG_WriteBits( msg, 1, 1 ); // something changed
 
@@ -1553,24 +1570,35 @@ void MSG_WriteDeltaPlayerstate( msg_t *msg, struct playerState_s *from, struct p
 			MSG_WriteBits( msg, persistantbits, MAX_PERSISTANT );
 			for ( i = 0 ; i < MAX_PERSISTANT ; i++ )
 				if ( persistantbits & ( 1 << i ) ) {
-					MSG_WriteShort( msg, to->persistant[i] );
+					MSG_WriteLong( msg, to->persistant[i] );
 				}
 		} else {
 			MSG_WriteBits( msg, 0, 1 ); // no change to persistant
 		}
 
 
-		if ( holdablebits ) {
-			MSG_WriteBits( msg, 1, 1 ); // changed
-			MSG_WriteShort( msg, holdablebits );
-			for ( i = 0 ; i < 16 ; i++ )
-				if ( holdablebits & ( 1 << i ) ) {
-					MSG_WriteShort( msg, to->holdable[i] );
-				}
-		} else {
-			MSG_WriteBits( msg, 0, 1 ); // no change to holdables
-		}
+        // holdables
+        if ( holdablebits[0] || holdablebits[1] ) {
+            MSG_WriteBits( msg, 1, 1 ); // changed
 
+            for ( j = 0; j < 2; j++ ) {
+                if ( holdablebits[j] ) {
+                    MSG_WriteBits( msg, 1, 1 ); // this block changed
+                    MSG_WriteShort( msg, holdablebits[j] );
+
+                    for ( i = 0; i < 16; i++ ) {
+                        if ( holdablebits[j] & ( 1 << i ) ) {
+                            int idx = i + j * 16;
+                            MSG_WriteShort( msg, to->holdable[idx] );
+                        }
+                    }
+                } else {
+                    MSG_WriteBits( msg, 0, 1 ); // this block unchanged
+                }
+            }
+        } else {
+            MSG_WriteBits( msg, 0, 1 ); // no change to holdables
+        }
 
 		if ( powerupbits ) {
 			MSG_WriteBits( msg, 1, 1 ); // changed
@@ -1582,10 +1610,22 @@ void MSG_WriteDeltaPlayerstate( msg_t *msg, struct playerState_s *from, struct p
 		} else {
 			MSG_WriteBits( msg, 0, 1 ); // no change to powerups
 		}
-	} else {
+
+		if ( perksbits ) {
+			MSG_WriteBits( msg, 1, 1 ); // changed
+			MSG_WriteBits( msg, perksbits, MAX_PERKS );
+			for ( i = 0 ; i < MAX_PERKS ; i++ )
+				if ( perksbits & ( 1 << i ) ) {
+					MSG_WriteLong( msg, to->perks[i] );
+				}
+		} else {
+			MSG_WriteBits( msg, 0, 1 ); // no change to powerups
+		}
+	}
+	else
+	{
 		MSG_WriteBits( msg, 0, 1 ); // no change to any
 	}
-
 
 #if 0
 // RF, optimization
@@ -1722,6 +1762,53 @@ void MSG_WriteDeltaPlayerstate( msg_t *msg, struct playerState_s *from, struct p
 			MSG_WriteBits( msg, 0, 1 ); // no change
 		}
 	}
+
+
+	int upgradedBits[4] = {0};
+
+	for (int j = 0; j < 4; j++)
+	{
+		for (int i = 0; i < 16; i++)
+		{
+			int index = i + j * 16;
+			if (to->weaponUpgraded[index] != from->weaponUpgraded[index])
+			{
+				upgradedBits[j] |= 1 << i;
+			}
+		}
+	}
+
+	if (upgradedBits[0] || upgradedBits[1] || upgradedBits[2] || upgradedBits[3])
+	{
+		MSG_WriteBits(msg, 1, 1); // something changed
+
+		for (int j = 0; j < 4; j++)
+		{
+			if (upgradedBits[j])
+			{
+				MSG_WriteBits(msg, 1, 1);
+				MSG_WriteShort(msg, upgradedBits[j]);
+
+				for (int i = 0; i < 16; i++)
+				{
+					if (upgradedBits[j] & (1 << i))
+					{
+						int index = i + j * 16;
+						MSG_WriteShort(msg, to->weaponUpgraded[index]);
+					}
+				}
+			}
+			else
+			{
+				MSG_WriteBits(msg, 0, 1); // no change in this block
+			}
+		}
+	}
+	else
+	{
+		MSG_WriteBits(msg, 0, 1); // no upgrade flags changed
+	}
+
 #endif
 
 	//1NTERRUPTOR
@@ -1840,21 +1927,33 @@ void MSG_ReadDeltaPlayerstate( msg_t *msg, playerState_t *from, playerState_t *t
 			bits = MSG_ReadBits (msg, MAX_PERSISTANT);
 			for ( i = 0 ; i < MAX_PERSISTANT ; i++ ) {
 				if ( bits & ( 1 << i ) ) {
-					to->persistant[i] = MSG_ReadShort( msg );
+					to->persistant[i] = MSG_ReadLong( msg );
 				}
 			}
 		}
 
-		// parse holdable stats
-		if ( MSG_ReadBits( msg, 1 ) ) {
-			LOG( "PS_HOLDABLE" );
-			bits = MSG_ReadShort( msg );
-			for ( i = 0 ; i < 16 ; i++ ) {
-				if ( bits & ( 1 << i ) ) {
-					to->holdable[i] = MSG_ReadShort( msg );
-				}
-			}
-		}
+        // parse holdables (two 16-item blocks)
+        if ( MSG_ReadBits( msg, 1 ) ) {
+            LOG( "PS_HOLDABLE" );
+
+            for ( j = 0; j < 2; j++ ) {
+                if ( MSG_ReadBits( msg, 1 ) ) {
+                    bits = MSG_ReadShort( msg );
+
+                    for ( i = 0; i < 16; i++ ) {
+                        if ( bits & ( 1 << i ) ) {
+                            int idx = i + j * 16;
+                            if ( idx < MAX_HOLDABLE ) {
+                                to->holdable[idx] = MSG_ReadShort( msg );
+                            } else {
+                                // still need to consume stream in sync even if idx out of range
+                                (void)MSG_ReadShort( msg );
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
 		// parse powerups
 		if ( MSG_ReadBits( msg, 1 ) ) {
@@ -1863,6 +1962,17 @@ void MSG_ReadDeltaPlayerstate( msg_t *msg, playerState_t *from, playerState_t *t
 			for ( i = 0 ; i < MAX_POWERUPS ; i++ ) {
 				if ( bits & ( 1 << i ) ) {
 					to->powerups[i] = MSG_ReadLong( msg );
+				}
+			}
+		}
+
+		// parse perks
+		if ( MSG_ReadBits( msg, 1 ) ) {
+			LOG( "PS_PERKS" );
+			bits = MSG_ReadBits (msg, MAX_PERKS);
+			for ( i = 0 ; i < MAX_PERKS ; i++ ) {
+				if ( bits & ( 1 << i ) ) {
+					to->perks[i] = MSG_ReadLong( msg );
 				}
 			}
 		}
@@ -1918,6 +2028,26 @@ void MSG_ReadDeltaPlayerstate( msg_t *msg, playerState_t *from, playerState_t *t
 			for ( i = 0 ; i < 16 ; i++ ) {
 				if ( bits & ( 1 << i ) ) {
 					to->ammoclip[i + ( j * 16 )] = MSG_ReadShort( msg );
+				}
+			}
+		}
+	}
+
+	if (MSG_ReadBits(msg, 1))
+	{
+		for (int j = 0; j < 4; j++)
+		{
+			if (MSG_ReadBits(msg, 1))
+			{
+				int bits = MSG_ReadShort(msg);
+
+				for (int i = 0; i < 16; i++)
+				{
+					if (bits & (1 << i))
+					{
+						int index = i + j * 16;
+						to->weaponUpgraded[index] = MSG_ReadShort(msg);
+					}
 				}
 			}
 		}

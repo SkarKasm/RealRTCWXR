@@ -136,7 +136,6 @@ void P_DamageFeedback( gentity_t *player ) {
 		case MOD_MORTAR_SPLASH:
 			trap_Vibrate(1000, 1, (count / 255.0) + 0.5f, "damage_rocket", yaw, pitch);
 			break;
-		case MOD_DAGGER:
 		case MOD_KNIFE:
 		case MOD_KNIFE2:
 		case MOD_KNIFE_STEALTH:
@@ -328,18 +327,40 @@ void P_WorldEffects( gentity_t *ent ) {
 	//
 	// check for burning from flamethrower
 	//
-	if ( ent->s.onFireEnd > level.time && ( AICast_AllowFlameDamage( ent->s.number ) ) ) {
-		gentity_t *attacker;
+	if (ent->s.onFireEnd > level.time && AICast_AllowFlameDamage(ent->s.number))
+	{
+		gentity_t *attacker = &g_entities[ent->flameBurnEnt];
+		int damageMOD = MOD_FLAMETHROWER;
 
-		if ( ent->health > 0 ) {
-			attacker = g_entities + ent->flameBurnEnt;
-				if ( ent->r.svFlags & SVF_CASTAI ) {
-					G_Damage( ent, attacker, attacker, NULL, NULL, 2, DAMAGE_NO_KNOCKBACK, MOD_FLAMETHROWER );
-				} else if ( ( ent->s.onFireEnd - level.time ) > FIRE_FLASH_TIME / 2 && rand() % 5000 < ( ent->s.onFireEnd - level.time ) ) { // as it fades out, also fade out damage rate
-					G_Damage( ent, attacker, attacker, NULL, NULL, 1, DAMAGE_NO_KNOCKBACK, MOD_FLAMETHROWER );
+		// In Survival mode, if flame source is a props_flamethrower, treat differently
+		if (g_gametype.integer == GT_SURVIVAL)
+		{
+			if (!attacker || !attacker->client)
+			{
+				if (attacker && attacker->classname && !Q_stricmp(attacker->classname, "props_flamethrower"))
+				{
+					attacker = &g_entities[0]; // Force attacker to be player
+					damageMOD = MOD_FLAMETRAP; // Use specific mod
 				}
-		} else if ( ent->s.onFireEnd > level.time + 4000 ) {  // dead, so sto pthe flames soon
-			ent->s.onFireEnd = level.time + 4000;   // stop burning soon
+			}
+		}
+
+		if (ent->health > 0)
+		{
+			int oldHealth = ent->health;
+
+			// Apply damage with selected MOD
+			G_Damage(ent, attacker, attacker, NULL, NULL, 2, DAMAGE_NO_KNOCKBACK, damageMOD);
+
+			// Stop fire effect if no damage is dealt
+			if ((oldHealth - ent->health) <= 0)
+			{
+				ent->s.onFireEnd = 0;
+			}
+		}
+		else if (ent->s.onFireEnd > level.time + 4000)
+		{
+			ent->s.onFireEnd = level.time + 4000;
 		}
 	}
 }
@@ -634,9 +655,24 @@ void ClientTimerActions( gentity_t *ent, int msec ) {
 			}
 
 		// regenerate health only if cvar is turned on
-     if (g_regen.integer == 1 && level.time >= client->healthRegenStartTime) {
+		// g_regen: 0 = off, 1 = full regen, 2 = partial regen (heals up to the nearest health threshold only, Wolfenstein: The New Order style)
+if ((g_regen.integer == 1 || g_regen.integer == 2 || g_gametype.integer == GT_SURVIVAL) && level.time >= client->healthRegenStartTime ) {
 
-		    if (ent->health < client->ps.stats[STAT_MAX_HEALTH])
+		    int regenCap = client->ps.stats[STAT_MAX_HEALTH];
+
+		    if ( g_regen.integer == 2 && g_gametype.integer != GT_SURVIVAL ) {
+			    // threshold scales with max health: 20/100, 10/50, 5/25, etc. (5 even segments)
+			    int regenSegment = client->ps.stats[STAT_MAX_HEALTH] / 5;
+			    if ( regenSegment < 1 ) {
+				    regenSegment = 1;
+			    }
+			    regenCap = ( ( ent->health + regenSegment - 1 ) / regenSegment ) * regenSegment;
+			    if ( regenCap > client->ps.stats[STAT_MAX_HEALTH] ) {
+				    regenCap = client->ps.stats[STAT_MAX_HEALTH];
+			    }
+		    }
+
+		    if (ent->health < regenCap)
 		    {
 			if (!ent->aiCharacter){ // no regen for AI
 
@@ -646,34 +682,62 @@ void ClientTimerActions( gentity_t *ent, int msec ) {
 					client->healthRegenStartTime = level.time + 500;
 					ent->health += 10;
 
-					if (ent->health > client->ps.stats[STAT_MAX_HEALTH])
+					if (ent->health > regenCap)
 					{
-						ent->health = client->ps.stats[STAT_MAX_HEALTH];
+						ent->health = regenCap;
 					}
 				}
 				  else if (ent->health >= client->ps.stats[STAT_MAX_HEALTH] * 0.50 && ent->health < client->ps.stats[STAT_MAX_HEALTH] * 0.75)
 				{
 					client->healthRegenStartTime = level.time + 750;
 					ent->health += 9;
+					if (ent->health > regenCap)
+					{
+						ent->health = regenCap;
+					}
 				} else if (ent->health >= client->ps.stats[STAT_MAX_HEALTH] * 0.25 && ent->health < client->ps.stats[STAT_MAX_HEALTH] * 0.50)
 				{
                    	client->healthRegenStartTime = level.time + 1000;
 					ent->health += 7;
+					if (ent->health > regenCap)
+					{
+						ent->health = regenCap;
+					}
 				}  else if (ent->health < client->ps.stats[STAT_MAX_HEALTH] * 0.25)
 				{
 					client->healthRegenStartTime = level.time + 1500;
 					ent->health += 5;
+					if (ent->health > regenCap)
+					{
+						ent->health = regenCap;
+					}
 				}
 
 
 			}
 		    }
+
+			// resilience PRO: slight armor regen tied to healthRegenStartTime gate
+			if ( g_gametype.integer == GT_SURVIVAL ) {
+				if ( !ent->aiCharacter && client->ps.perks[PERK_RESILIENCE] >= 2 ) {
+					if ( client->ps.stats[STAT_ARMOR] < 100 ) {
+						client->ps.stats[STAT_ARMOR] += 2;
+						if ( client->ps.stats[STAT_ARMOR] > 100 ) {
+							client->ps.stats[STAT_ARMOR] = 100;
+						}
+					}
+				}
+			}
 		}
 
 
-		// count down armor when over max // RealRTCW if more than 100
-		if ( client->ps.stats[STAT_ARMOR] > 100 ) {
-			client->ps.stats[STAT_ARMOR]--;
+		// count down armor when over max
+		if (g_gametype.integer != GT_SURVIVAL)
+		{
+			if (client->ps.stats[STAT_ARMOR] > 100)
+			{
+				client->ps.stats[STAT_ARMOR]--;
+			}
 		}
 	}
 
@@ -752,47 +816,73 @@ void ClientEvents( gentity_t *ent, int oldEventSequence ) {
 
 			stunTime = 0;   //----(SA)	added
 
-//----(SA)	FIXME: TODO:  hmm, going through here adding surfaceparms it seems that the value for ent->client->ps.pm_time was weird.  (1000 for all but dmg_25 which has 250?)
-			if ( event == EV_FALL_NDIE ) {
+			if (event == EV_FALL_NDIE)
+			{
 				damage = 9999;
-			} else if ( event == EV_FALL_DMG_50 ) {
-			if ( client->ps.powerups[PW_FLIGHT] ) 
-			    {
-				damage = 25;
-				stunTime = 500;
-			    } else {
-				damage = 50;
-				stunTime = 1000;
+			}
+			else if (client->ps.perks[PERK_RUNNER] > 0)
+			{
+				damage = 0;
+				stunTime = 0;
+			}
+			else
+			{
+				if (event == EV_FALL_DMG_50)
+				{
+					if (client->ps.powerups[PW_FLIGHT])
+					{
+						damage = 25;
+						stunTime = 500;
+					}
+					else
+					{
+						damage = 50;
+						stunTime = 1000;
+					}
 				}
-			} else if ( event == EV_FALL_DMG_25 ) {
-			if ( client->ps.powerups[PW_FLIGHT] ) 
-			    {
-				damage = 12;
-				stunTime = 125;
-			    } else {
-				damage = 25;
-				stunTime = 250;
+				else if (event == EV_FALL_DMG_25)
+				{
+					if (client->ps.powerups[PW_FLIGHT])
+					{
+						damage = 12;
+						stunTime = 125;
+					}
+					else
+					{
+						damage = 25;
+						stunTime = 250;
+					}
 				}
-			} else if ( event == EV_FALL_DMG_15 ) {
-			if ( client->ps.powerups[PW_FLIGHT] ) 
-			    {
-				damage = 7;
-				stunTime = 500;
-			    } else {
-				damage = 15;
-				stunTime = 1000;
+				else if (event == EV_FALL_DMG_15)
+				{
+					if (client->ps.powerups[PW_FLIGHT])
+					{
+						damage = 7;
+						stunTime = 500;
+					}
+					else
+					{
+						damage = 15;
+						stunTime = 1000;
+					}
 				}
-			} else if ( event == EV_FALL_DMG_10 ) {
-			if ( client->ps.powerups[PW_FLIGHT] ) 
-			    {
-				damage = 5;
-				stunTime = 500;
-			    } else {
-				damage = 10;
-				stunTime = 1000;
+				else if (event == EV_FALL_DMG_10)
+				{
+					if (client->ps.powerups[PW_FLIGHT])
+					{
+						damage = 5;
+						stunTime = 500;
+					}
+					else
+					{
+						damage = 10;
+						stunTime = 1000;
+					}
 				}
-			} else {
-				damage = 5; // never used
+				else
+				{
+					damage = 5; // never used
+				}
 			}
 
 			fallSoundMul *= 2;  // double range for falls greater than FALL_SHORT
@@ -864,18 +954,24 @@ void ClientEvents( gentity_t *ent, int oldEventSequence ) {
 				quickgren_fire( ent, WP_GRENADE_PINEAPPLE );
 			
 			break;
-
-		case EV_USE_ITEM1:      // ( HI_MEDKIT )	medkit
-		case EV_USE_ITEM2:      // ( HI_WINE )		wine
-		case EV_USE_ITEM3:      // ( HI_SKULL )		skull of invulnerable
-		case EV_USE_ITEM4:      // ( HI_WATER )		protection from drowning
-		case EV_USE_ITEM5:      // ( HI_ELECTRIC )	protection from electric attacks
-		case EV_USE_ITEM6:      // ( HI_FIRE )		protection from fire attacks
-		case EV_USE_ITEM7:      // ( HI_STAMINA )	restores fatigue bar and sets "nofatigue" for a time period
-		case EV_USE_ITEM8:      // ( HI_BOOK1 )
-		case EV_USE_ITEM9:      // ( HI_BOOK2 )
-		case EV_USE_ITEM10:     // ( HI_BOOK3 )
-			UseHoldableItem( ent, event - EV_USE_ITEM0 );
+		case EV_USE_ITEM1:
+		case EV_USE_ITEM2:
+		case EV_USE_ITEM3:
+		case EV_USE_ITEM4:
+		case EV_USE_ITEM5:
+		case EV_USE_ITEM6:
+		case EV_USE_ITEM7:
+		case EV_USE_ITEM8:
+		case EV_USE_ITEM9:
+		case EV_USE_ITEM10:
+		case EV_USE_ITEM11:
+		case EV_USE_ITEM12:
+		case EV_USE_ITEM13:
+		case EV_USE_ITEM14:
+		case EV_USE_ITEM15:
+		case EV_USE_ITEM16:
+		case EV_USE_ITEM17:
+			UseHoldableItem(ent, event - EV_USE_ITEM0);
 			break;
 		case EV_THROWKNIFE:
 			ThrowKnife( ent );
@@ -1110,7 +1206,7 @@ void ClientThink_real( gentity_t *ent ) {
 	                }
 		break;
 		case WP_M1941SCOPE:
-	if ( client->sniperRifleFiredTime ) {
+	             if ( client->sniperRifleFiredTime ) {
 		            if ( level.time - client->sniperRifleFiredTime >  ammoTable[WP_M1941SCOPE].weapRecoilDuration ) {
 			        client->sniperRifleFiredTime = 0;
 		            } else {
@@ -1126,23 +1222,23 @@ void ClientThink_real( gentity_t *ent ) {
 		case WP_DELISLESCOPE:
 	             if ( client->sniperRifleFiredTime ) {
 		            if ( level.time - client->sniperRifleFiredTime >  ammoTable[WP_DELISLESCOPE].weapRecoilDuration ) {
-			client->sniperRifleFiredTime = 0;
-		} else {
-			VectorCopy( client->ps.viewangles,muzzlebounce );
+			        client->sniperRifleFiredTime = 0;
+		            } else {
+			        VectorCopy( client->ps.viewangles,muzzlebounce );
 			         muzzlebounce[PITCH] -= 0.25*client->sniperRifleMuzzlePitch*cos( 2.5*( level.time - client->sniperRifleFiredTime ) / ammoTable[WP_DELISLESCOPE].weapRecoilDuration );
 			         muzzlebounce[YAW] += 0.2*client->sniperRifleMuzzleYaw*cos( 1.0 - ( level.time - client->sniperRifleFiredTime )*3 / ammoTable[WP_DELISLESCOPE].weapRecoilDuration );
 			         muzzlebounce[PITCH] -= 0.25*client->sniperRifleMuzzlePitch*random() * ( 1.0f - ( level.time - client->sniperRifleFiredTime ) / ammoTable[WP_DELISLESCOPE].weapRecoilDuration );
 			         muzzlebounce[YAW] += 0.2 * crandom() * ( 1.0f - ( level.time - client->sniperRifleFiredTime ) / ammoTable[WP_DELISLESCOPE].weapRecoilDuration );
-			SetClientViewAngle( ent,muzzlebounce );
-		}
-	}
+			         SetClientViewAngle( ent,muzzlebounce );
+		            }
+	                }
 		break;
 	}
-	if ( client->ps.stats[STAT_PLAYER_CLASS] == PC_MEDIC ) {
-		if ( level.time > client->ps.powerups[PW_REGEN] + 5000 ) {
-			client->ps.powerups[PW_REGEN] = level.time;
-		}
-	}
+	//if ( client->ps.stats[STAT_PLAYER_CLASS] == PC_MEDIC ) {
+		//if ( level.time > client->ps.powerups[PW_REGEN] + 5000 ) {
+		//	client->ps.powerups[PW_REGEN] = level.time;
+		//}
+	//}
 
 	// check for inactivity timer, but never drop the local client of a non-dedicated server
 	if ( !ClientInactivityTimer( client ) ) {
@@ -1197,6 +1293,13 @@ void ClientThink_real( gentity_t *ent ) {
 		client->ps.pm_type = PM_NORMAL;
 	}
 
+	// defense-in-depth: don't let a stuck/spoofed weapon wheel flag keep dilation active while dead, in a cutscene, on mg42, or at intermission
+	if ( client->pers.weaponWheelOpen &&
+		 ( client->ps.stats[STAT_HEALTH] <= 0 || client->cameraPortal ||
+		   ( client->ps.eFlags & EF_MG42_ACTIVE ) || level.intermissiontime ) ) {
+		client->pers.weaponWheelOpen = qfalse;
+	}
+
 	// set parachute anim condition flag
 	BG_UpdateConditionValue( ent->s.number, ANIM_COND_PARACHUTE, ( ent->flags & FL_PARACHUTE ) != 0, qfalse );
 
@@ -1223,6 +1326,18 @@ void ClientThink_real( gentity_t *ent ) {
 
 	if ( client->ps.powerups[PW_HASTE] ) {
 		client->ps.speed *= 1.2;
+	}
+
+	if ( client->ps.powerups[PW_HASTE_SURV] ) {
+		client->ps.speed *= 2.0;
+	}
+
+	if (g_gametype.integer == GT_SURVIVAL)
+	{
+		if (!ent->aiCharacter && client->ps.perks[PERK_RUNNER] >= 2)
+		{
+			client->ps.speed *= 1.25;
+		}
 	}
 
 	// set up for pmove
@@ -1266,6 +1381,11 @@ void ClientThink_real( gentity_t *ent ) {
 	VectorCopy( client->ps.origin, client->oldOrigin );
 
 	pm.ltChargeTime = g_LTChargeTime.integer;
+	pm.soldierChargeTime = g_soldierChargeTime.integer;
+	pm.engineerChargeTime = g_engineerChargeTime.integer;
+	pm.medicChargeTime = g_medicChargeTime.integer;
+	pm.cvopsChargeTime = g_cvopsChargeTime.integer;
+	pm.gametype = g_gametype.integer;
 
 	// perform a pmove
 #ifdef MISSIONPACK
@@ -1282,7 +1402,24 @@ void ClientThink_real( gentity_t *ent ) {
 		}
 	}
 #endif
+
+	if ( g_gametype.integer == GT_SURVIVAL || g_aiCollision.integer == 0 ) {
+		for ( i = 0; i < level.num_entities; ++i ) {
+			if ( g_entities[i].r.svFlags & SVF_CASTAI && g_entities[i].aiTeam == ent->aiTeam && &g_entities[i] != ent ) {
+				trap_UnlinkEntity( &g_entities[i] );
+			}
+		}
+	}
+
 	monsterslick = Pmove( &pm );
+
+	if ( g_gametype.integer == GT_SURVIVAL || g_aiCollision.integer == 0 ) {
+		for ( i = 0; i < level.num_entities; ++i ) {
+			if ( g_entities[i].r.svFlags & SVF_CASTAI && g_entities[i].aiTeam == ent->aiTeam && &g_entities[i] != ent ) {
+				trap_LinkEntity( &g_entities[i] );
+			}
+		}
+	}
 
 	if ( monsterslick && !( ent->flags & FL_NO_MONSTERSLICK ) ) {
 		{
@@ -1865,19 +2002,19 @@ void ClientEndFrame( gentity_t *ent ) {
 			AICast_CheckDangerousEntity( ent, DANGER_CLIENTAIM, HOLYCROSS_RANGE + 150, 0.5, 0.6, ( ent->client->buttons & BUTTON_ATTACK ? qtrue : qfalse ) );
 			break;
 		case WP_MONSTER_ATTACK1:
-			if ( ent->aiCharacter == AICHAR_ZOMBIE ) {
+			if ( ent->aiCharacter == AICHAR_ZOMBIE || ent->aiCharacter == AICHAR_ZOMBIE_SURV || ent->aiCharacter == AICHAR_ZOMBIE_GHOST || ent->aiCharacter == AICHAR_ZOMBIE_FLAME  ) {
 				AICast_CheckDangerousEntity( ent, DANGER_CLIENTAIM | DANGER_FLAMES, FLAMETHROWER_RANGE + 150, 0.5, 0.8, qtrue );
 			}
 			break;
 		case WP_MONSTER_ATTACK2:
-			if ( ent->aiCharacter == AICHAR_ZOMBIE ) {
+			if ( ent->aiCharacter == AICHAR_ZOMBIE || ent->aiCharacter == AICHAR_ZOMBIE_SURV || ent->aiCharacter == AICHAR_ZOMBIE_GHOST || ent->aiCharacter == AICHAR_ZOMBIE_FLAME   ) {
 				if ( ent->client->ps.eFlags & EF_MONSTER_EFFECT ) {
 					AICast_CheckDangerousEntity( ent, 0, 4000, 0.5, 0.8, qtrue );
 				}
 			}
 			break;
 		case WP_MONSTER_ATTACK3:
-			if ( ent->aiCharacter == AICHAR_LOPER ) {
+			if ( ent->aiCharacter == AICHAR_LOPER || ent->aiCharacter == AICHAR_LOPER_SPECIAL ) {
 				AICast_CheckDangerousEntity( ent, 0, LOPER_GROUND_RANGE + 100, 0.5, 0.8, qtrue );
 			}
 			break;
@@ -1892,6 +2029,7 @@ void ClientEndFrame( gentity_t *ent ) {
 			break;
 		case WP_GRENADE_PINEAPPLE:
 		case WP_GRENADE_LAUNCHER:   // if they are wearing down a grenade fuse, we should be very afraid
+		case WP_SMOKE_BOMB:
 		case WP_POISONGAS:
 			if ( ent->client->ps.grenadeTimeLeft && ent->client->ps.grenadeTimeLeft < 3000 ) {
 				AICast_CheckDangerousEntity( ent, DANGER_CLIENTAIM, 1000, 0.5, 0.9, qtrue );

@@ -1032,9 +1032,28 @@ typedef struct sentity_s
   alSrcPriority_t	loopPriority;
   sfxHandle_t			loopSfx;
   qboolean				startLoopingSound;
+  int             loopVolume;   // 0-255, per-loop volume (AddLoopingSound's volume arg)
+  float           loopRange;    // per-loop fade-to-silent cutoff
 } sentity_t;
 
-static sentity_t entityList[MAX_GENTITIES];
+static sentity_t entityList[MAX_GENTITIES + MAX_AMBIENT_LOOPS];
+
+/*
+   =================
+   S_AL_LoopIndex
+
+   Resolves entityNum to a real entityList[] index. Negative entityNum is an
+   ambient slot -(entityNum)-1 (see MAX_AMBIENT_LOOPS). Returns -1 if out of range.
+   =================
+   */
+static int S_AL_LoopIndex( int entityNum )
+{
+  if ( entityNum >= 0 )
+    return ( entityNum < MAX_GENTITIES ) ? entityNum : -1;
+  if ( ( -entityNum - 1 ) < MAX_AMBIENT_LOOPS )
+    return MAX_GENTITIES + ( -entityNum - 1 );
+  return -1;
+}
 
 /*
    =================
@@ -1074,7 +1093,7 @@ static void S_AL_Gain(ALuint source, float gainval)
    =================
    */
 
-static void S_AL_ScaleGain(src_t *chksrc, vec3_t origin)
+static void S_AL_ScaleGain(src_t *chksrc, vec3_t origin, float maxDistance)
 {
   float distance;
 
@@ -1083,7 +1102,7 @@ static void S_AL_ScaleGain(src_t *chksrc, vec3_t origin)
 
   // If we exceed a certain distance, scale the gain linearly until the sound
   // vanishes into nothingness.
-  if(!chksrc->local && (distance -= s_alMaxDistance->value) > 0)
+  if(!chksrc->local && (distance -= maxDistance) > 0)
   {
     float scaleFactor;
 
@@ -1217,6 +1236,35 @@ void S_AL_SrcShutdown( void )
 
 /*
    =================
+   S_AL_DilationPitch
+
+   Playback-rate multiplier for world time dilation (weapon wheel slow-mo).
+   UI/meta channels aren't part of the game world and stay at normal speed;
+   everything else follows cl.timeDilation. Guards against cl.timeDilation
+   still being zero-initialised before the first CL_ClearState().
+   =================
+   */
+static float S_AL_DilationPitch( int channel )
+{
+  float dilation;
+
+  switch( channel )
+  {
+    case CHAN_LOCAL:
+    case CHAN_LOCAL_SOUND:
+    case CHAN_ANNOUNCER:
+      return 1.0f;
+  }
+
+  dilation = cl.timeDilation;
+  if ( dilation <= 0.0f ) {
+    dilation = 1.0f;
+  }
+  return dilation;
+}
+
+/*
+   =================
    S_AL_SrcSetup
    =================
    */
@@ -1255,7 +1303,7 @@ static void S_AL_SrcSetup(srcHandle_t src, sfxHandle_t sfx, alSrcPriority_t prio
     qalSourcei(curSource->alSource, AL_BUFFER, S_AL_BufferGet(sfx));
   }
 
-  qalSourcef(curSource->alSource, AL_PITCH, 1.0f);
+  qalSourcef(curSource->alSource, AL_PITCH, S_AL_DilationPitch(channel));
   S_AL_Gain(curSource->alSource, curSource->curGain);
   qalSourcefv(curSource->alSource, AL_POSITION, vec3_origin);
   qalSourcefv(curSource->alSource, AL_VELOCITY, vec3_origin);
@@ -1716,14 +1764,16 @@ void S_AL_StartLocalSound(sfxHandle_t sfx, int channel)
    Play a one-shot sound effect
    =================
    */
-static void S_AL_MainStartSound( vec3_t origin, int entnum, int entchannel, sfxHandle_t sfx, int flags )
+static void S_AL_MainStartSound( vec3_t origin, int entnum, int entchannel, sfxHandle_t sfx, int flags, int volume )
 {
   vec3_t sorigin;
   srcHandle_t src;
   src_t *curSource;
 
-  if (entnum >= 0 && entnum < MAX_CLIENTS)
+  if ( entnum >= 0 && entnum < MAX_CLIENTS ) 
+  {
     s_entityTalkAmplitude[entnum] = 0;
+  }
 
   if(origin)
   {
@@ -1737,10 +1787,14 @@ static void S_AL_MainStartSound( vec3_t origin, int entnum, int entchannel, sfxH
     if(S_AL_CheckInput(entnum, sfx))
       return;
 
-    if(S_AL_HearingThroughEntity(entnum))
+    // Only do the "local sound optimization" if no flags are used
+    if (S_AL_HearingThroughEntity(entnum))
     {
-      S_AL_StartLocalSound(sfx, entchannel);
-      return;
+      if (!(flags & (SND_CUTOFF | SND_CUTOFF_ALL | SND_OKTOCUT | SND_REQUESTCUT)))
+      {
+        S_AL_StartLocalSound(sfx, entchannel);
+        return;
+      }
     }
 
     VectorCopy(entityList[entnum].origin, sorigin);
@@ -1766,7 +1820,13 @@ static void S_AL_MainStartSound( vec3_t origin, int entnum, int entchannel, sfxH
 
   curSource = &srcList[src];
 
-  if ( (entnum < MAX_CLIENTS) && (entchannel == CHAN_VOICE) )
+  if ( volume != 255 )
+  {
+    // leave scaleGain untouched so S_AL_ScaleGain() below sees curGain changed and re-applies AL_GAIN
+    curSource->curGain *= volume / 255.0f;
+  }
+
+  if ( (entnum >= 0 && entnum < MAX_CLIENTS) && (entchannel == CHAN_VOICE) )
   {
     if(offset_ext && knownSfx[sfx].voice){
       s_entityTalkAmplitude[entnum] = S_AL_VoiceAmplitude(sfx, VOICE_AHEAD);
@@ -1776,11 +1836,24 @@ static void S_AL_MainStartSound( vec3_t origin, int entnum, int entchannel, sfxH
     }
   }
 
-  if(!origin)
-    curSource->isTracking = qtrue;
-
-  qalSourcefv(curSource->alSource, AL_POSITION, sorigin );
-  S_AL_ScaleGain(curSource, sorigin);
+  if ( !origin ) {
+    if ( S_AL_HearingThroughEntity( entnum ) && entchannel == CHAN_WEAPON ) {
+      curSource->isTracking = qfalse;
+      qalSourcei( curSource->alSource, AL_SOURCE_RELATIVE, AL_TRUE );
+      qalSource3f( curSource->alSource, AL_POSITION, 0.0f, 0.0f, 0.0f );
+      qalSourcef( curSource->alSource, AL_ROLLOFF_FACTOR, 0.0f );
+      S_AL_ScaleGain( curSource, lastListenerOrigin, s_alMaxDistance->value );
+    } else {
+      curSource->isTracking = qtrue;
+      qalSourcei( curSource->alSource, AL_SOURCE_RELATIVE, AL_FALSE );
+      qalSourcefv( curSource->alSource, AL_POSITION, sorigin );
+      S_AL_ScaleGain( curSource, sorigin, s_alMaxDistance->value );
+    }
+  } else {
+    qalSourcei( curSource->alSource, AL_SOURCE_RELATIVE, AL_FALSE );
+    qalSourcefv( curSource->alSource, AL_POSITION, sorigin );
+    S_AL_ScaleGain( curSource, sorigin, s_alMaxDistance->value );
+  }
 
   // Start it playing
   curSource->isPlaying = qtrue;
@@ -1795,7 +1868,7 @@ static void S_AL_MainStartSound( vec3_t origin, int entnum, int entchannel, sfxH
    */
 static void S_AL_StartSound( vec3_t origin, int entnum, int entchannel, sfxHandle_t sfx )
 {
-  S_AL_MainStartSound( origin, entnum, entchannel, sfx, 0 );
+  S_AL_MainStartSound( origin, entnum, entchannel, sfx, 0, 255 );
 }
 
 /*
@@ -1811,7 +1884,19 @@ static void S_AL_StartSoundEx( vec3_t origin, int entnum, int entchannel, sfxHan
   }
 
   // RF, make the call now, or else we could override following streaming sounds in the same frame, due to the delay
-  S_AL_MainStartSound( origin, entnum, entchannel, sfx, flags );
+  S_AL_MainStartSound( origin, entnum, entchannel, sfx, flags, 255 );
+}
+
+/*
+   =================
+   S_AL_StartSoundVControl
+
+   Same as S_AL_StartSound, but with an explicit volume instead of the default full volume
+   =================
+   */
+static void S_AL_StartSoundVControl( vec3_t origin, int entnum, int entchannel, sfxHandle_t sfx, int volume )
+{
+  S_AL_MainStartSound( origin, entnum, entchannel, sfx, 0, volume );
 }
 
 /*
@@ -1836,24 +1921,42 @@ void S_AL_ClearLoopingSounds( qboolean killall )
    =================
    */
 static void S_AL_SrcLoop( alSrcPriority_t priority, sfxHandle_t sfx,
-    const vec3_t origin, const vec3_t velocity, int entityNum, int volume )
+    const vec3_t origin, const vec3_t velocity, int entityNum, int volume, int range )
 {
   int				src;
-  sentity_t	*sent = &entityList[ entityNum ];
+  int       idx;
+  sentity_t	*sent;
   src_t		*curSource;
   vec3_t		sorigin, svelocity;
 
-  if( entityNum < 0 || entityNum >= MAX_GENTITIES )
+  idx = S_AL_LoopIndex( entityNum );
+  if ( idx < 0 )
     return;
 
-  if(S_AL_CheckInput(entityNum, sfx))
-    return;
+  if ( volume > 255 ) {
+    volume = 255;
+  } else if ( volume < 0 ) {
+    volume = 0;
+  }
+
+  if ( entityNum >= 0 )
+  {
+    if ( S_AL_CheckInput( entityNum, sfx ) )    // real entity: use the shared bounds/sfx check
+      return;
+  }
+  else
+  {
+    if ( sfx < 0 || sfx >= numSfx )    // ambient slot: CheckInput's entity bound doesn't apply, just check sfx
+      return;
+  }
+
+  sent = &entityList[ idx ];
 
   // Do we need to allocate a new source for this entity
   if( !sent->srcAllocated )
   {
     // Try to get a channel
-    src = S_AL_SrcAlloc( sfx, priority, entityNum, -1, 0 );
+    src = S_AL_SrcAlloc( sfx, priority, idx, -1, 0 );
     if( src == -1 )
     {
       Com_DPrintf( S_COLOR_YELLOW "WARNING: Failed to allocate source "
@@ -1879,6 +1982,8 @@ static void S_AL_SrcLoop( alSrcPriority_t priority, sfxHandle_t sfx,
 
   sent->loopPriority = priority;
   sent->loopSfx = sfx;
+  sent->loopVolume = volume;
+  sent->loopRange = ( range > 0 ) ? (float)range : s_alMaxDistance->value;
 
   // If this is not set then the looping sound is stopped.
   sent->loopAddedThisFrame = qtrue;
@@ -1887,7 +1992,7 @@ static void S_AL_SrcLoop( alSrcPriority_t priority, sfxHandle_t sfx,
   // These lines should be called via S_AL_SrcSetup, but we
   // can't call that yet as it buffers sfxes that may change
   // with subsequent calls to S_AL_SrcLoop
-  curSource->entity = entityNum;
+  curSource->entity = idx;
   curSource->isLooping = qtrue;
 
   if( S_AL_HearingThroughEntity( entityNum ) )
@@ -1929,6 +2034,9 @@ static void S_AL_SrcLoop( alSrcPriority_t priority, sfxHandle_t sfx,
 
     qalSourcefv(curSource->alSource, AL_POSITION, (ALfloat *) sorigin);
     qalSourcefv(curSource->alSource, AL_VELOCITY, (ALfloat *) svelocity);
+
+    // refreshed every frame so per-loop volume applies even when S_AL_SrcUpdate doesn't reset curGain
+    curSource->curGain = s_alGain->value * s_volume->value * ( volume / 255.0f );
   }
 }
 
@@ -1939,7 +2047,7 @@ static void S_AL_SrcLoop( alSrcPriority_t priority, sfxHandle_t sfx,
    */
 static void S_AL_AddLoopingSound(int entityNum, const vec3_t origin, const vec3_t velocity, const int range, sfxHandle_t sfx, int volume)
 {
-  S_AL_SrcLoop(SRCPRI_ENTITY, sfx, origin, velocity, entityNum, volume);
+  S_AL_SrcLoop(SRCPRI_ENTITY, sfx, origin, velocity, entityNum, volume, range);
 }
 
 /*
@@ -1949,7 +2057,7 @@ static void S_AL_AddLoopingSound(int entityNum, const vec3_t origin, const vec3_
    */
 static void S_AL_AddRealLoopingSound(int entityNum, const vec3_t origin, const vec3_t velocity, const int range, sfxHandle_t sfx)
 {
-  S_AL_SrcLoop(SRCPRI_AMBIENT, sfx, origin, velocity, entityNum, 255);
+  S_AL_SrcLoop(SRCPRI_AMBIENT, sfx, origin, velocity, entityNum, 255, range);
 }
 
 /*
@@ -2001,12 +2109,20 @@ void S_AL_SrcUpdate( void )
     if(!curSource->isActive)
       continue;
 
+    // Keep already-playing sources in sync with world time dilation; S_AL_SrcSetup
+    // only applies AL_PITCH once, at (re)start, which wouldn't track the ramp.
+    qalSourcef(curSource->alSource, AL_PITCH, S_AL_DilationPitch(curSource->channel));
+
     // Update source parameters
     if((s_alGain->modified) || (s_volume->modified))
+    {
       curSource->curGain = s_alGain->value * s_volume->value;
+      if ( curSource->isLooping )
+        curSource->curGain *= entityList[curSource->entity].loopVolume / 255.0f;
+    }
     if((s_alRolloff->modified) && (!curSource->local))
       qalSourcef(curSource->alSource, AL_ROLLOFF_FACTOR, s_alRolloff->value);
-    if(s_alMinDistance->modified)
+    if(s_alMinDistance->modified && !curSource->isLooping)
       qalSourcef(curSource->alSource, AL_REFERENCE_DISTANCE, s_alMinDistance->value);
 
     if(curSource->isLooping)
@@ -2037,13 +2153,16 @@ void S_AL_SrcUpdate( void )
               entityNum, -1, 0, curSource->local);
           curSource->isLooping = qtrue;
 
+          // apply this loop's own volume
+          curSource->curGain *= sent->loopVolume / 255.0f;
+
           knownSfx[curSource->sfx].loopCnt++;
           sent->startLoopingSound = qfalse;
         }
 
         curSfx = &knownSfx[curSource->sfx];
 
-        S_AL_ScaleGain(curSource, curSource->loopSpeakerPos);
+        S_AL_ScaleGain(curSource, curSource->loopSpeakerPos, sent->loopRange);
         if(!curSource->scaleGain)
         {
           if(curSource->isPlaying)
@@ -2170,11 +2289,16 @@ void S_AL_SrcUpdate( void )
     // See if it needs to be moved
     if(curSource->isTracking && !state)
     {
-      qalSourcefv(curSource->alSource, AL_POSITION, entityList[entityNum].origin);
-      S_AL_ScaleGain(curSource, entityList[entityNum].origin);
+      // Guard against a stale/invalid entity index (can happen during
+      // scripted scenes) which would dereference a wild pointer.
+      if(entityNum >= 0 && entityNum < MAX_GENTITIES)
+      {
+        qalSourcefv(curSource->alSource, AL_POSITION, entityList[entityNum].origin);
+        S_AL_ScaleGain(curSource, entityList[entityNum].origin, s_alMaxDistance->value);
+      }
     }
 
-    if ( ( entityNum < MAX_CLIENTS) && (entityChannel == CHAN_VOICE ))
+    if ( ( entityNum >= 0 && entityNum < MAX_CLIENTS) && (entityChannel == CHAN_VOICE ))
     {
       if(offset_ext && knownSfx[curSource->sfx].voice ){
         qalGetSourcef(curSource->alSource,AL_SEC_OFFSET,&offset);
@@ -2494,8 +2618,9 @@ static byte decode_buffer[MUSIC_BUFFER_SIZE];
    S_AL_MusicSourceGet
    =================
    */
-static void S_AL_MusicSourceGet( void )
-{
+//static void S_AL_MusicSourceGet( void )
+//{
+  /*
   // Allocate a musicSource at high priority
   musicSourceHandle = S_AL_SrcAlloc(-1, SRCPRI_STREAM, -2, 0, 0);
   if(musicSourceHandle == -1)
@@ -2515,21 +2640,24 @@ static void S_AL_MusicSourceGet( void )
   qalSource3f(musicSource, AL_DIRECTION,       0.0, 0.0, 0.0);
   qalSourcef (musicSource, AL_ROLLOFF_FACTOR,  0.0          );
   qalSourcei (musicSource, AL_SOURCE_RELATIVE, AL_TRUE      );
-}
+  */
+//}
 
 /*
    =================
    S_AL_MusicSourceFree
    =================
    */
-static void S_AL_MusicSourceFree( void )
-{
+//static void S_AL_MusicSourceFree( void )
+//{
+  /*
   // Release the output musicSource
   S_AL_SrcUnlock(musicSourceHandle);
   S_AL_SrcKill(musicSourceHandle);
   musicSource = 0;
   musicSourceHandle = -1;
-}
+  */
+//}
 
 /*
    =================
@@ -2556,28 +2684,37 @@ static void S_AL_CloseMusicFiles(void)
    S_AL_StopBackgroundTrack
    =================
    */
-  static
-void S_AL_StopBackgroundTrack( void )
+static void S_AL_StopBackgroundTrack(void)
 {
-  if(!musicPlaying)
-    return;
+    ALint queued;
 
-  // Stop playing
-  qalSourceStop(musicSource);
+    if (!musicPlaying)
+        return;
 
-  // Detach any buffers
-  qalSourcei(musicSource, AL_BUFFER, 0);
+    // Stop playback
+    qalSourceStop(musicSource);
 
-  // Delete the buffers
-  qalDeleteBuffers(NUM_MUSIC_BUFFERS, musicBuffers);
+    // Unqueue ALL buffers before trying to delete or detach
+    qalGetSourcei(musicSource, AL_BUFFERS_QUEUED, &queued);
+    while (queued-- > 0)
+    {
+        ALuint buffer;
+        qalSourceUnqueueBuffers(musicSource, 1, &buffer);
+    }
 
-  // Free the musicSource
-  S_AL_MusicSourceFree();
+    // Detach any remaining buffer just in case
+    qalSourcei(musicSource, AL_BUFFER, 0);
 
-  // Unload the stream
-  S_AL_CloseMusicFiles();
+    // Now it's safe to delete
+    qalDeleteBuffers(NUM_MUSIC_BUFFERS, musicBuffers);
 
-  musicPlaying = qfalse;
+    // Free the music source handle (e.g. from pool)
+   //S_AL_MusicSourceFree();
+
+    // Close streams
+    S_AL_CloseMusicFiles();
+
+    musicPlaying = qfalse;
 }
 
 /*
@@ -2654,78 +2791,75 @@ void S_AL_MusicProcess(ALuint b)
    S_AL_StartBackgroundTrack
    =================
    */
-  static
-void S_AL_StartBackgroundTrack( const char *intro, const char *loop )
+static void S_AL_StartBackgroundTrack(const char *intro, const char *loop)
 {
-  int i;
-  qboolean issame;
+    int i;
+    qboolean issame;
 
-  Com_DPrintf( "S_AL_StartBackgroundTrack( %s, %s )\n", intro, loop );
+    Com_DPrintf("S_AL_StartBackgroundTrack( %s, %s )\n", intro, loop);
 
-  // Stop any existing music that might be playing
-  S_AL_StopBackgroundTrack();
+    // Stop any existing music and clean state
+    S_AL_StopBackgroundTrack();
 
-  Cvar_Set( "s_currentMusic", "" ); //----(SA)	so the savegame will have the right music
+    Cvar_Set("s_currentMusic", "");
 
-  if((!intro || !*intro) && (!loop || !*loop))
-    return;
+    if ((!intro || !*intro) && (!loop || !*loop))
+        return;
 
-  // Allocate a musicSource
-  S_AL_MusicSourceGet();
-  if(musicSourceHandle == -1)
-    return;
+    // 🔥 Generate a new OpenAL source every time
+    qalGenSources(1, &musicSource);
+    if (!musicSource)
+    {
+        Com_Printf("^1[OpenAL] Failed to generate new music source!\n");
+        return;
+    }
 
-  if (!loop || !*loop)
-  {
-    loop = intro;
-    issame = qtrue;
-  }
-  else if(intro && *intro && !strcmp(intro, loop))
-    issame = qtrue;
-  else
-    issame = qfalse;
+    musicSourceHandle = 1; // Set to anything valid
 
-  // Copy the loop over
-  Q_strncpyz( s_backgroundLoop, loop, sizeof( s_backgroundLoop ) );
+    if (!loop || !*loop)
+    {
+        loop = intro;
+        issame = qtrue;
+    }
+    else if (intro && *intro && !strcmp(intro, loop))
+        issame = qtrue;
+    else
+        issame = qfalse;
 
-  if(!issame)
-  {
-    // Open the intro and don't mind whether it succeeds.
-    // The important part is the loop.
-    intro_stream = S_CodecOpenStream(intro);
-  }
-  else
-    intro_stream = NULL;
+    Q_strncpyz(s_backgroundLoop, loop, sizeof(s_backgroundLoop));
 
-  Cvar_Set( "s_currentMusic", s_backgroundLoop ); //----(SA)	so the savegame will have the right music
+    if (!issame)
+        intro_stream = S_CodecOpenStream(intro);
+    else
+        intro_stream = NULL;
 
-  mus_stream = S_CodecOpenStream(s_backgroundLoop);
-  if(!mus_stream)
-  {
-    S_AL_CloseMusicFiles();
-    S_AL_MusicSourceFree();
-    return;
-  }
+    Cvar_Set("s_currentMusic", s_backgroundLoop);
 
-  // Generate the musicBuffers
-  if (!S_AL_GenBuffers(NUM_MUSIC_BUFFERS, musicBuffers, "music"))
-    return;
+    mus_stream = S_CodecOpenStream(s_backgroundLoop);
+    if (!mus_stream)
+    {
+        S_AL_CloseMusicFiles();
+        qalDeleteSources(1, &musicSource);
+        musicSource = 0;
+        musicSourceHandle = -1;
+        return;
+    }
 
-  // Queue the musicBuffers up
-  for(i = 0; i < NUM_MUSIC_BUFFERS; i++)
-  {
-    S_AL_MusicProcess(musicBuffers[i]);
-  }
+    if (!S_AL_GenBuffers(NUM_MUSIC_BUFFERS, musicBuffers, "music"))
+        return;
 
-  qalSourceQueueBuffers(musicSource, NUM_MUSIC_BUFFERS, musicBuffers);
+    for (i = 0; i < NUM_MUSIC_BUFFERS; i++)
+    {
+        S_AL_MusicProcess(musicBuffers[i]);
+    }
 
-  // Set the initial gain property
-  S_AL_Gain(musicSource, s_alGain->value * s_musicVolume->value);
+    qalSourceQueueBuffers(musicSource, NUM_MUSIC_BUFFERS, musicBuffers);
 
-  // Start playing
-  qalSourcePlay(musicSource);
+    S_AL_Gain(musicSource, s_alGain->value * s_musicVolume->value);
 
-  musicPlaying = qtrue;
+    qalSourcePlay(musicSource);
+
+    musicPlaying = qtrue;
 }
 
 /*
@@ -3358,6 +3492,7 @@ qboolean S_AL_Init( soundInterface_t *si )
       si->Shutdown = S_AL_Shutdown;
       si->StartSound = S_AL_StartSound;
       si->StartSoundEx = S_AL_StartSoundEx;
+      si->StartSoundVControl = S_AL_StartSoundVControl;
       si->StartLocalSound = S_AL_StartLocalSound;
       si->StartBackgroundTrack = S_AL_StartBackgroundTrack;
       si->StopBackgroundTrack = S_AL_StopBackgroundTrack;
