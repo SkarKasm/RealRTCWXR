@@ -39,6 +39,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #endif
 #endif
 
+#if defined( _MSC_VER ) && !defined( DEDICATED )
+// RealRTCW XR: SDL3 has no SDLmain library; SDL_main.h supplies WinMain for the
+// Windows-subsystem MSVC build (upstream builds with MinGW instead)
+#	include "SDL3/SDL_main.h"
+#endif
+
 #include "sys_local.h"
 #include "sys_loadlib.h"
 
