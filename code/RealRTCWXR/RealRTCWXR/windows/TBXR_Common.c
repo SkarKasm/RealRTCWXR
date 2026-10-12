@@ -284,10 +284,18 @@ static void ovrRenderer_ClearSwapChain(ovrRenderer* renderer, ovrSwapChain* swap
 
 // Copies one eye to the desktop window
 static void ovrRenderer_Mirror(ovrRenderer* renderer) {
-	int width, height;
+	int width = 0, height = 0;
 	float aspect;
-	cvar_t* r_mode = Cvar_Get("r_mode", "20", CVAR_ARCHIVE | CVAR_LATCH);
-	re.GetModeInfo(&width, &height, &aspect, r_mode->integer);
+
+	// Use the real window size: r_mode -2 (desktop, RealRTCW 5.4's default) has no
+	// mode-table entry, so GetModeInfo fails and leaves width/height unset.
+	SDL_Window* window = SDL_GL_GetCurrentWindow();
+	if (!window || !SDL_GetWindowSizeInPixels(window, &width, &height) || width <= 0 || height <= 0) {
+		cvar_t* r_mode = Cvar_Get("r_mode", "20", CVAR_ARCHIVE | CVAR_LATCH);
+		if (!re.GetModeInfo(&width, &height, &aspect, r_mode->integer)) {
+			return;
+		}
+	}
 
 	const int eye = (vr_mirror_eye && vr_mirror_eye->integer == 0) ? 0 : 1;
 
