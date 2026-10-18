@@ -1,16 +1,9 @@
 //
-// RealRTCW XR: RealRTCW 5.4 bakes arms and gloves into the first-person weapon
-// models ('hqarm' and 'hqhand' surfaces). In VR they move with the weapon, not the
-// controllers, and XR already draws its own off-hand, so draw nothing.
+// RealRTCW XR: RealRTCW 5.4 bakes sleeves into the first-person weapon models
+// ('hqarm' surfaces). In VR they don't follow the controllers, so draw nothing.
+// The gloves stay: the XR weapon and off-hand models use glove_default too.
 //
 models/weapons/hands/sleeve_default
-{
-	surfaceparm nodraw
-	surfaceparm nomarks
-	surfaceparm nolightmap
-}
-
-models/weapons/hands/glove_default
 {
 	surfaceparm nodraw
 	surfaceparm nomarks
